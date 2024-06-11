@@ -1,21 +1,21 @@
 # Uses the ``mpmath`` library, which has built-in methods to calculate Pi to a high precision.
 
 import mpmath
-import time  # Ensure this import is at the top of your file
+import time
+import mpmath
 
-mpmath.mp.dps = 10000  # set number of decimal places
-
-# Calculate Pi using the Chudnovsky algorithm
 def calculate_pi():
+    total_iterations = 10000  # Total number of iterations
+    ten_percent = total_iterations / 10  # Calculate what 10% of the iterations is
+    milestone_start_time = time.time()  # Record the start time for the first milestone
+
+    # Initialize variables for Pi calculation
     C = 426880 * mpmath.sqrt(10005)
     K = 6
     M = 1
     X = 1
     L = 13591409
     S = L
-    total_iterations = 10000  # Total number of iterations
-    ten_percent = total_iterations / 10  # Calculate what 10% of the iterations is
-    milestone_start_time = time.time()  # Record the start time for the first milestone
 
     for i in range(1, total_iterations + 1):
         M = (K**3 - 16*K) * M // i**3
@@ -34,10 +34,11 @@ def calculate_pi():
     pi = C / S
     return pi
 
-    # Record the start time# Record the start time
-    start_time = time.time()
+# Record the start time
+start_time = time.time()
 
 # Set the precision and calculate Pi
+mpmath.mp.dps = 10000  # set number of decimal places
 pi = calculate_pi()
 
 # Convert Pi to a string

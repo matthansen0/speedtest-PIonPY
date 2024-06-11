@@ -5,12 +5,16 @@
 import mpmath
 import time
 from multiprocessing import Pool, cpu_count
+import mpmath
 
-# Set the precision
 mpmath.mp.dps = 10000  # set number of decimal places
 
 def calculate_segment(start, end, segment_index, total_segments):
     print(f"Segment {segment_index+1}/{total_segments} started.")
+    segment_length = end - start + 1
+    ten_percent = segment_length / 10
+    progress_checkpoint = ten_percent
+
     C = 426880 * mpmath.sqrt(10005)
     K = 6 + 12 * start
     M = 1
@@ -25,11 +29,13 @@ def calculate_segment(start, end, segment_index, total_segments):
         S += mpmath.mpf(M * L) / X
         K += 12
 
+        # Report progress at every 10%
+        if i - start >= progress_checkpoint:
+            print(f"Segment {segment_index+1}/{total_segments}: {int((i - start) / segment_length * 100)}% completed.")
+            progress_checkpoint += ten_percent
+
     print(f"Segment {segment_index+1}/{total_segments} completed.")
     return S
-
-    # Record the start time# Record the start time
-    start_time = time.time()
 
 def main():
     num_segments = cpu_count()  # Use number of CPU cores
@@ -50,14 +56,6 @@ def main():
     # Record the end time
     end_time = time.time()
 
-    # Calculate the duration
-    duration = end_time - start_time
-
-    # Get the last 50 digits
-    last_50_digits = pi_str[-50:]
-
-    print("The last 50 digits of Pi are:", last_50_digits)
-    print(f"The Pi calculation took {duration} seconds.")
-
+# Ensure to call main() if this script is the entry point
 if __name__ == "__main__":
     main()
