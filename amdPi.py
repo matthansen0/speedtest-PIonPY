@@ -28,6 +28,9 @@ def calculate_segment(start, end, segment_index, total_segments):
     print(f"Segment {segment_index+1}/{total_segments} completed.")
     return S
 
+    # Record the start time# Record the start time
+    start_time = time.time()
+
 def main():
     num_segments = cpu_count()  # Use number of CPU cores
     segment_size = 10000 // num_segments

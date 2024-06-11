@@ -34,6 +34,9 @@ def calculate_pi():
     pi = C / S
     return pi
 
+    # Record the start time# Record the start time
+    start_time = time.time()
+
 # Set the precision and calculate Pi
 pi = calculate_pi()
 
