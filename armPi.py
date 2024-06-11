@@ -3,7 +3,7 @@
 import mpmath
 
 # Set the precision
-mpmath.mp.dps = 100000  # set number of decimal places
+mpmath.mp.dps = 10000  # set number of decimal places
 
 # Calculate Pi using the Chudnovsky algorithm
 def calculate_pi():
@@ -14,12 +14,16 @@ def calculate_pi():
     L = 13591409
     S = L
 
-    for i in range(1, 100000):
+    for i in range(1, 10000):
         M = (K**3 - 16*K) * M // i**3
         L += 545140134
         X *= -262537412640768000
         S += mpmath.mpf(M * L) / X
         K += 12
+
+        # Print a progress message every 1000 iterations
+        if i % 1000 == 0:
+            print(f"Progress: {i} iterations completed")
 
     pi = C / S
     return pi

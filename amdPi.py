@@ -6,9 +6,10 @@ import mpmath
 from multiprocessing import Pool, cpu_count
 
 # Set the precision
-mpmath.mp.dps = 100000  # set number of decimal places
+mpmath.mp.dps = 10000  # set number of decimal places
 
-def calculate_segment(start, end):
+def calculate_segment(start, end, segment_index, total_segments):
+    print(f"Segment {segment_index+1}/{total_segments} started.")
     C = 426880 * mpmath.sqrt(10005)
     K = 6 + 12 * start
     M = 1
@@ -23,14 +24,17 @@ def calculate_segment(start, end):
         S += mpmath.mpf(M * L) / X
         K += 12
 
+    print(f"Segment {segment_index+1}/{total_segments} completed.")
     return S
 
 def main():
     num_segments = cpu_count()  # Use number of CPU cores
-    segment_size = 100000 // num_segments
+    segment_size = 10000 // num_segments
+
+    segment_args = [(i * segment_size, (i + 1) * segment_size - 1, i, num_segments) for i in range(num_segments)]
 
     with Pool(processes=num_segments) as pool:
-        segments = pool.starmap(calculate_segment, [(i * segment_size, (i + 1) * segment_size - 1) for i in range(num_segments)])
+        segments = pool.starmap(calculate_segment, segment_args)
 
     S = sum(segments)
     C = 426880 * mpmath.sqrt(10005)
