@@ -11,6 +11,7 @@ mpmath.mp.dps = 10000  # set number of decimal places
 
 def calculate_segment(start, end, segment_index, total_segments):
     print(f"Segment {segment_index+1}/{total_segments} started.")
+    segment_start_time = time.time()  # Record the start time of the segment
     segment_length = end - start + 1
     ten_percent = segment_length / 10
     progress_checkpoint = ten_percent
@@ -31,8 +32,11 @@ def calculate_segment(start, end, segment_index, total_segments):
 
         # Report progress at every 10%
         if i - start >= progress_checkpoint:
-            print(f"Segment {segment_index+1}/{total_segments}: {int((i - start) / segment_length * 100)}% completed.")
+            current_time = time.time()
+            segment_duration = current_time - segment_start_time
+            print(f"Segment {segment_index+1}/{total_segments}: {int((i - start) / segment_length * 100)}% completed. Duration: {segment_duration:.2f} seconds.")
             progress_checkpoint += ten_percent
+            segment_start_time = current_time  # Reset the start time for the next 10%
 
     print(f"Segment {segment_index+1}/{total_segments} completed.")
     return S
