@@ -4,7 +4,6 @@
 # pypy3 -m pip install -r requirements.txt
 # pypy3 intelPi.py
 
-
 import mpmath 
 import time
 
@@ -22,6 +21,7 @@ def calculate_pi():
 
     total_iterations = 10000
     breakpoint_interval = total_iterations // 10  # Calculate the interval for breakpoints
+    start_time = time.time()  # Initialize the start time for the entire calculation
 
     for i in range(1, total_iterations + 1):
         M = (K**3 - 16*K) * M // i**3
@@ -32,9 +32,11 @@ def calculate_pi():
 
         # Check if the current iteration is a breakpoint
         if i % breakpoint_interval == 0:
-            # Approximate the progress in decimal places
+            current_time = time.time()
+            duration = current_time - start_time
             progress = i // breakpoint_interval * 10  # This is a rough approximation
-            print(f"Completed approximately {progress}% of the iterations.")
+            print(f"Completed approximately {progress}% of the iterations in {duration:.2f} seconds.")
+            start_time = time.time()  # Reset the start time for the next interval
 
     pi = C / S
     return pi
