@@ -1,6 +1,7 @@
 # Uses the ``mpmath`` library, which has built-in methods to calculate Pi to a high precision.
 
 import mpmath
+import time
 
 # Set the precision
 mpmath.mp.dps = 10000  # set number of decimal places
@@ -34,7 +35,14 @@ pi = calculate_pi()
 # Convert Pi to a string
 pi_str = str(pi)
 
+# Record the end time
+end_time = time.time()
+
+# Calculate the duration
+duration = end_time - start_time
+
 # Get the last 50 digits
 last_50_digits = pi_str[-50:]
 
 print("The last 50 digits of Pi are:", last_50_digits)
+print(f"The Pi calculation took {duration} seconds.")

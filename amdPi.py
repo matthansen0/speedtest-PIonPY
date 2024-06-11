@@ -3,6 +3,7 @@
 # For the sake of completeness, here’s an approach using multiprocessing for other types of intensive computations.
 
 import mpmath
+import time
 from multiprocessing import Pool, cpu_count
 
 # Set the precision
@@ -43,10 +44,17 @@ def main():
     # Convert Pi to a string
     pi_str = str(pi)
 
+    # Record the end time
+    end_time = time.time()
+
+    # Calculate the duration
+    duration = end_time - start_time
+
     # Get the last 50 digits
     last_50_digits = pi_str[-50:]
 
     print("The last 50 digits of Pi are:", last_50_digits)
+    print(f"The Pi calculation took {duration} seconds.")
 
 if __name__ == "__main__":
     main()
