@@ -86,7 +86,6 @@ I welcome contributions from the community! Whether it's adding new optimization
 
 Here are the next steps for the SpeedTest-PiOnPy project to enhance its functionality and user experience:
 
-- [x] **Community Review on Arm Optimization**: Having run these tests multiple ways, I assume there are significant optimizations that could be made to the Arm benchmark. **Updated to use multiprocessing for parallel computation across all CPU cores.**
 - [ ] **Optimize Algorithm Efficiency**: Further refine the mathematical algorithms to improve calculation speed without sacrificing accuracy.
 - [ ] **Enhance User Interface**: Develop a more interactive and user-friendly interface for the benchmarking tools.
 
