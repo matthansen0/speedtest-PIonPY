@@ -39,21 +39,14 @@ To get started, follow these simple steps:
 
 ``cd speedtest-PIonPY``
 
-2.) **Install Dependencies**
+2.) **(Optional) Ensure Python Base Tools**
 
-Ensure you have Python 3.x installed on your system. Then, install the required Python libraries:
-
-**Recommended: Use a Python virtual environment (works for AMD, ARM, and Intel):**
+Most systems already have what you need. If `python3 -m venv` fails, install the venv module (Debian/Ubuntu example):
 
 ```bash
-sudo apt install python3-pip python3-venv -y
+sudo apt update && sudo apt install python3 python3-venv -y
 ```
-
-```bash
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-```
+No manual `pip install` steps are required— the preparation script handles dependencies inside a local `venv/`.
 
 3.) **Prepare Environment (One-Time or Re-Runnable)**
 
@@ -61,7 +54,7 @@ pip install -r requirements.txt
 python3 prepare_benchmark.py
 ```
 
-This creates/updates `./venv`, installs dependencies, and (optionally) suggests PyPy.
+This creates/updates `./venv`, installs dependencies (from `requirements.txt`), and (optionally) suggests PyPy if you're on Intel/AMD.
 
 4.) **Run the Benchmark**
 
