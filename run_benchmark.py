@@ -28,7 +28,7 @@ import time
 from multiprocessing import Pool, cpu_count
 
 DEFAULT_ITERATIONS = 10000
-SHOW_PROGRESS = False  # kept minimal per user simplicity request
+SHOW_PROGRESS = True  # always show per-segment progress by default
 
 
 def ensure_mpmath():
@@ -127,7 +127,16 @@ def main():
     pi_val, elapsed = approximate_parallel(DEFAULT_ITERATIONS)
     pi_str = str(pi_val)
     print("[result] Last 50 digits:", pi_str[-50:])
-    print(f"[result] Elapsed: {elapsed:.2f} s | Cores used: {cpu_count()} | Iterations: {DEFAULT_ITERATIONS}")
+    # Color-coded elapsed time: green fast (<5s), yellow (<15s), red otherwise.
+    if elapsed < 5:
+        color_code = '92'  # bright green
+    elif elapsed < 15:
+        color_code = '93'  # yellow
+    else:
+        color_code = '91'  # red
+    colored_elapsed = f"\033[{color_code}m{elapsed:.2f} s\033[0m"
+    print(f"[result] Elapsed: {colored_elapsed} | Cores used: {cpu_count()} | Iterations: {DEFAULT_ITERATIONS}")
+    print('[info] Progress checkpoints (10% per segment) enabled by default.')
     print("[note] Result is from an approximate segmented method (not exact decomposition).")
 
 

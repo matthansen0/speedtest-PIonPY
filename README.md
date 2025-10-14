@@ -65,6 +65,8 @@ python3 run_benchmark.py
 
 Output shows detected vendor, elapsed time, and last 50 digits (approximate). PyPy is optional (beneficial on Intel). No other steps required.
 
+Progress checkpoints (10% per worker segment) are displayed by default. Iteration count is fixed internally (10,000) for consistent cross-architecture comparison.
+
 ![Intel Example](media/intel_example.png "Intel Example")
 
 ## Notes on Accuracy & Future Enhancements
