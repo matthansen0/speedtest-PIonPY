@@ -1,21 +1,73 @@
-# ARM processors benefit from parallel processing across their multiple cores.
-# This implementation uses multiprocessing to distribute the Pi calculation workload
-# across all available CPU cores, optimizing for ARM architecture.
+"""ARM Pi benchmark with basic big.LITTLE awareness and parallel execution.
 
-import mpmath
+Enhancements:
+ - Core frequency weighting: attempts to read max freq per core to weight work distribution
+ - Configurable iterations/processes via argparse
+ - Optional progress output and CPU affinity pinning
+ - Single computation of constant C
+
+Similar mathematical caveat as other scripts: segmentation approximates the
+Chudnovsky recurrence state. Suitable for relative throughput benchmarking.
+"""
+
+import argparse
+import os
 import time
 from multiprocessing import Pool, cpu_count
+import mpmath
 
-mpmath.mp.dps = 10000  # set number of decimal places
+mpmath.mp.dps = 10000
+C_CONST = 426880 * mpmath.sqrt(10005)
 
-def calculate_segment(start, end, segment_index, total_segments):
-    print(f"Segment {segment_index+1}/{total_segments} started.")
-    segment_start_time = time.time()  # Record the start time of the segment
-    segment_length = end - start + 1
-    ten_percent = segment_length / 10
-    progress_checkpoint = ten_percent
+def read_core_frequencies(limit):
+    freqs = []
+    for core in range(limit):
+        path = f"/sys/devices/system/cpu/cpu{core}/cpufreq/cpuinfo_max_freq"
+        try:
+            with open(path, 'r') as f:
+                val = int(f.read().strip())
+        except Exception:
+            val = 1  # fallback
+        freqs.append(max(val, 1))
+    # Normalize (keep original magnitudes for weighting algorithm)
+    return freqs
 
-    C = 426880 * mpmath.sqrt(10005)
+def allocate_ranges(total_iterations, processes, weights):
+    total_w = sum(weights)
+    base_counts = [int(total_iterations * w / total_w) for w in weights]
+    assigned = sum(base_counts)
+    # distribute leftover
+    leftover = total_iterations - assigned
+    idx = 0
+    while leftover > 0:
+        base_counts[idx] += 1
+        leftover -= 1
+        idx = (idx + 1) % processes
+    # build ranges
+    ranges = []
+    start = 0
+    for i, count in enumerate(base_counts):
+        end = start + count - 1
+        ranges.append((start, end, i, processes))
+        start = end + 1
+    return ranges
+
+def _maybe_set_affinity(core_id, affinity):
+    if not affinity:
+        return
+    try:
+        os.sched_setaffinity(0, {core_id})
+    except Exception:
+        pass
+
+def calculate_segment(args):
+    start, end, segment_index, total_segments, progress, affinity = args
+    _maybe_set_affinity(segment_index % os.cpu_count(), affinity)
+    seg_len = end - start + 1
+    ten_percent = max(1, seg_len // 10)
+    next_checkpoint = start + ten_percent if progress else end + 1
+    t0 = time.time()
+
     K = 6 + 12 * start
     M = 1
     X = 1
@@ -28,49 +80,43 @@ def calculate_segment(start, end, segment_index, total_segments):
         X *= -262537412640768000
         S += mpmath.mpf(M * L) / X
         K += 12
-
-        # Report progress at every 10%
-        if i - start >= progress_checkpoint:
-            current_time = time.time()
-            segment_duration = current_time - segment_start_time
-            print(f"Segment {segment_index+1}/{total_segments}: {int((i - start) / segment_length * 100)}% completed. Duration: {segment_duration:.2f} seconds.")
-            progress_checkpoint += ten_percent
-            segment_start_time = current_time  # Reset the start time for the next 10%
-
-    print(f"Segment {segment_index+1}/{total_segments} completed.")
+        if progress and i >= next_checkpoint:
+            pct = int(((i - start) / seg_len) * 100)
+            print(f"[ARM Segment {segment_index+1}/{total_segments}] {pct}% done (elapsed {time.time() - t0:.2f}s)")
+            t0 = time.time()
+            next_checkpoint += ten_percent
     return S
 
+def run_parallel(total_iterations, processes, progress, affinity, weight):
+    processes = processes or cpu_count()
+    if weight:
+        freqs = read_core_frequencies(processes)
+    else:
+        freqs = [1] * processes
+    ranges = allocate_ranges(total_iterations, processes, freqs)
+    args = [(start, end, idx, processes, progress, affinity) for (start, end, idx, _) in ranges]
+    t0 = time.time()
+    with Pool(processes=processes) as pool:
+        parts = pool.map(calculate_segment, args)
+    S_total = sum(parts)
+    return (C_CONST / S_total), time.time() - t0
+
+def parse_args():
+    p = argparse.ArgumentParser(description="ARM Pi benchmark")
+    p.add_argument('--iterations', type=int, default=10000, help='Total iteration count (default 10000)')
+    p.add_argument('--processes', type=int, default=0, help='Number of worker processes (default: cpu_count)')
+    p.add_argument('--progress', action='store_true', help='Show per-segment progress')
+    p.add_argument('--affinity', action='store_true', help='Pin worker processes to specific cores')
+    p.add_argument('--weight-freq', action='store_true', help='Weight work by core max frequency (big.LITTLE)')
+    return p.parse_args()
+
 def main():
-    num_segments = cpu_count()  # Use number of CPU cores
-    segment_size = 10000 // num_segments
+    args = parse_args()
+    overall_start = time.time()
+    pi_val, elapsed = run_parallel(args.iterations, args.processes, args.progress, args.affinity, args.weight_freq)
+    total_elapsed = time.time() - overall_start
+    print("Last 50 digits:", str(pi_val)[-50:])
+    print(f"Parallel time: {elapsed:.2f}s | Total time: {total_elapsed:.2f}s | Processes: {args.processes or cpu_count()} | Iterations: {args.iterations} | Weighted: {args.weight_freq}")
 
-    segment_args = [(i * segment_size, (i + 1) * segment_size - 1, i, num_segments) for i in range(num_segments)]
-
-    with Pool(processes=num_segments) as pool:
-        segments = pool.starmap(calculate_segment, segment_args)
-
-    S = sum(segments)
-    C = 426880 * mpmath.sqrt(10005)
-    pi = C / S
-
-    # Convert Pi to a string
-    pi_str = str(pi)
-
-    # Record the end time
-    end_time = time.time()
-
-    # Calculate the duration
-    duration = end_time - start_time
-
-    # Get the last 50 digits
-    last_50_digits = pi_str[-50:]
-
-    print("The last 50 digits of Pi are:", last_50_digits)
-    print(f"The Pi calculation took {duration} seconds.")
-
-# Record the start time
-start_time = time.time()
-
-# Ensure to call main() if this script is the entry point
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

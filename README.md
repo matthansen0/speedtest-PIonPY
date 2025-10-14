@@ -57,29 +57,24 @@ pip install -r requirements.txt
 
 3.) **Run the Benchmark**
 
-Execute the main script to start the benchmark:
-
-For Arm: ``python3 armPi.py``
-
-![Arm Example](media/amd_example.png "Arm Example")
-
-For AMD: `python3 amdPi.py`
-
-![AMD Example](media/amd_example.png "AMD Example")
-
-For Intel:
-
-To use PyPy on Intel, first install it and set up a PyPy virtual environment:
+Single command (auto-detects architecture, uses all cores):
 
 ```bash
-sudo apt install pypy3 pypy3-venv
-pypy3 -m venv pypy-venv
-source pypy-venv/bin/activate
-pip install mpmath
-pypy3 intelPi.py
+python3 run_benchmark.py
 ```
 
+Output shows detected vendor, elapsed time, and last 50 digits (approximate). PyPy is optional (beneficial on Intel). No other steps required.
+
 ![Intel Example](media/intel_example.png "Intel Example")
+
+## Notes on Accuracy & Future Enhancements
+
+The current single-script benchmark uses an approximate segmented parallel method to stress CPUs uniformly. It is suitable for relative throughput comparisons (the goal of this project) but is not a mathematically strict parallelization of the Chudnovsky series. Future improvements may include:
+
+- Exact per-term or binary-splitting implementation (mathematically rigorous)
+- JSON output mode for automated comparisons
+- Optional correctness validation against known π prefixes
+- Thermal / frequency sampling during runs
 
 ## Contributing
 
