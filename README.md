@@ -63,9 +63,17 @@ Single command (auto-detects architecture, uses all cores):
 python3 run_benchmark.py
 ```
 
-Output shows detected vendor, elapsed time, and last 50 digits (approximate). PyPy is optional (beneficial on Intel). No other steps required.
+Output shows detected vendor, elapsed time (color-coded), last 50 digits (approximate), and writes a JSON results file (e.g. `results_*.json`).
 
-Progress checkpoints (10% per worker segment) are displayed by default. Iteration count is fixed internally (10,000) for consistent cross-architecture comparison.
+Automatic optimizations now included:
+* Warm-up pass (1% of iterations) for cache/JIT stabilization
+* Core affinity pinning (best-effort) to reduce migration
+* ARM big.LITTLE frequency weighting (allocates more work to faster cores)
+* Intel auto re-exec under PyPy if available for JIT speedups
+* JSON result artifact for later comparison
+* Always-on per-segment (10%) progress reporting
+
+Progress checkpoints (10% per worker segment) are displayed by default. Iteration count is fixed internally (10,000) for consistent cross-architecture comparison; a warm-up (unreported) precedes the main run.
 
 ![Intel Example](media/intel_example.png "Intel Example")
 

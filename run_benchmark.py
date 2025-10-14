@@ -25,10 +25,16 @@ import os
 import platform
 import sys
 import time
+import json
+import shutil
+from datetime import datetime
 from multiprocessing import Pool, cpu_count
 
 DEFAULT_ITERATIONS = 10000
+WARMUP_FRACTION = 0.01  # 1% of iterations (minimum 100) to warm caches / JIT
 SHOW_PROGRESS = True  # always show per-segment progress by default
+PIN_AFFINITY = True   # try to pin each worker to a distinct core
+WEIGHT_ARM_FREQ = True  # weight ARM segments by max core frequency
 
 
 def ensure_mpmath():
@@ -74,9 +80,15 @@ def _segment_work(args):
     """Approximate segment computation (not mathematically exact series split).
     Mirrors original per-arch logic to keep relative comparability.
     """
-    (start, end, idx, total_segments) = args
+    (start, end, idx, total_segments, core_id) = args
     import mpmath
     mpmath.mp.dps = 100  # local dps sufficient for partial accumulation (final precision dominated by global)
+    # Optional affinity pinning (best-effort)
+    if PIN_AFFINITY and core_id is not None:
+        try:
+            os.sched_setaffinity(0, {core_id})
+        except Exception:
+            pass
     K = 6 + 12 * start
     M = 1
     X = 1
@@ -98,33 +110,88 @@ def _segment_work(args):
     return S
 
 
-def approximate_parallel(iterations: int):
+def _read_arm_freqs(limit: int):
+    freqs = []
+    for i in range(limit):
+        path = f"/sys/devices/system/cpu/cpu{i}/cpufreq/cpuinfo_max_freq"
+        try:
+            with open(path, 'r') as f:
+                val = int(f.read().strip())
+        except Exception:
+            val = 1
+        freqs.append(max(1, val))
+    return freqs
+
+
+def _allocate_segments(total: int, processes: int, weights):
+    # weights length == processes
+    wsum = sum(weights)
+    raw_counts = [int(total * w / wsum) for w in weights]
+    assigned = sum(raw_counts)
+    # distribute remainder
+    rem = total - assigned
+    idx = 0
+    while rem > 0:
+        raw_counts[idx] += 1
+        rem -= 1
+        idx = (idx + 1) % processes
+    # Build contiguous ranges
+    ranges = []
+    start = 0
+    for i, count in enumerate(raw_counts):
+        end = start + count - 1
+        ranges.append((start, end))
+        start = end + 1
+    return ranges
+
+
+def approximate_parallel(iterations: int, vendor: str):
     import mpmath
     mpmath.mp.dps = 10000
-    segs = cpu_count()
-    seg_size = iterations // segs
+    processes = cpu_count()
+    if vendor == 'ARM' and WEIGHT_ARM_FREQ:
+        weights = _read_arm_freqs(processes)
+    else:
+        weights = [1] * processes
+    seg_ranges = _allocate_segments(iterations, processes, weights)
     bounds = []
-    for s in range(segs):
-        start = s * seg_size
-        end = (s + 1) * seg_size - 1 if s < segs - 1 else iterations - 1
-        bounds.append((start, end, s, segs))
+    for idx, (start, end) in enumerate(seg_ranges):
+        core_id = idx if idx < processes else None
+        bounds.append((start, end, idx, processes, core_id))
     t0 = time.time()
-    with Pool(processes=segs) as p:
+    with Pool(processes=processes) as p:
         parts = p.map(_segment_work, bounds)
     S = sum(parts)
     C = 426880 * mpmath.sqrt(10005)
     pi_val = C / S
-    return pi_val, time.time() - t0
+    return pi_val, time.time() - t0, processes
+
+
+def _maybe_reexec_with_pypy(vendor: str):
+    if vendor == 'Intel' and 'pypy' not in sys.version.lower():
+        pypy = shutil.which('pypy3')
+        if pypy:
+            print(f"[info] Re-executing under PyPy for Intel optimization: {pypy}")
+            os.execv(pypy, [pypy] + sys.argv)
+        else:
+            print('[hint] PyPy not found; continuing with current interpreter.')
 
 
 def main():
     ensure_mpmath()
     vendor = detect_vendor()
     print(f"[info] Detected architecture/vendor: {vendor}")
-    if vendor == 'Intel' and 'pypy' not in sys.version.lower():
-        print('[hint] PyPy may yield higher Intel throughput (optional).')
+    _maybe_reexec_with_pypy(vendor)
+    # Warm-up (small fraction) to stabilize JIT / caches
+    warmup_iters = max(100, int(DEFAULT_ITERATIONS * WARMUP_FRACTION))
+    print(f"[info] Warm-up run: {warmup_iters} iterations (not timed in final result)")
+    global SHOW_PROGRESS
+    saved_progress = SHOW_PROGRESS
+    SHOW_PROGRESS = False  # suppress progress during warm-up
+    approximate_parallel(warmup_iters, vendor)
+    SHOW_PROGRESS = saved_progress
     print(f"[info] Running approximate parallel benchmark with {DEFAULT_ITERATIONS} iterations...")
-    pi_val, elapsed = approximate_parallel(DEFAULT_ITERATIONS)
+    pi_val, elapsed, procs = approximate_parallel(DEFAULT_ITERATIONS, vendor)
     pi_str = str(pi_val)
     print("[result] Last 50 digits:", pi_str[-50:])
     # Color-coded elapsed time: green fast (<5s), yellow (<15s), red otherwise.
@@ -135,9 +202,35 @@ def main():
     else:
         color_code = '91'  # red
     colored_elapsed = f"\033[{color_code}m{elapsed:.2f} s\033[0m"
-    print(f"[result] Elapsed: {colored_elapsed} | Cores used: {cpu_count()} | Iterations: {DEFAULT_ITERATIONS}")
+    print(f"[result] Elapsed: {colored_elapsed} | Cores used: {procs} | Iterations: {DEFAULT_ITERATIONS}")
     print('[info] Progress checkpoints (10% per segment) enabled by default.')
+    if vendor == 'ARM' and WEIGHT_ARM_FREQ:
+        print('[info] ARM frequency weighting applied to segment distribution.')
+    if PIN_AFFINITY:
+        print('[info] Core affinity pinning attempted (best-effort).')
     print("[note] Result is from an approximate segmented method (not exact decomposition).")
+
+    # Write JSON results
+    result = {
+        'timestamp': datetime.utcnow().isoformat() + 'Z',
+        'vendor': vendor,
+        'python_impl': platform.python_implementation(),
+        'python_version': platform.python_version(),
+        'iterations': DEFAULT_ITERATIONS,
+        'warmup_iterations': warmup_iters,
+        'elapsed_seconds': elapsed,
+        'processes': procs,
+        'affinity': PIN_AFFINITY,
+        'arm_frequency_weighting': (vendor == 'ARM' and WEIGHT_ARM_FREQ),
+        'approximate_method': True,
+    }
+    fname = f"results_{int(time.time())}.json"
+    try:
+        with open(fname, 'w') as f:
+            json.dump(result, f, indent=2)
+        print(f"[info] JSON results written to {fname}")
+    except Exception as e:
+        print(f"[warn] Failed to write JSON results: {e}")
 
 
 if __name__ == '__main__':
