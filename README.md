@@ -35,7 +35,7 @@ To get started, follow these simple steps:
 
 1.) **Clone the Repository**
 
-``bash git clone https://github.com/yourusername/speedtest-PIonPY.git``
+``bash git clone https://github.com/matthansen0/speedtest-PIonPY.git``
 
 ``cd speedtest-PIonPY``
 
