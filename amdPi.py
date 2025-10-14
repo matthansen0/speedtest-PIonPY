@@ -60,6 +60,18 @@ def main():
     # Record the end time
     end_time = time.time()
 
+    # Calculate the duration
+    duration = end_time - start_time
+
+    # Get the last 50 digits
+    last_50_digits = pi_str[-50:]
+
+    print("The last 50 digits of Pi are:", last_50_digits)
+    print(f"The Pi calculation took {duration} seconds.")
+
+# Record the start time
+start_time = time.time()
+
 # Ensure to call main() if this script is the entry point
 if __name__ == "__main__":
     main()
