@@ -35,7 +35,7 @@ To get started, follow these simple steps:
 
 1.) **Clone the Repository**
 
-``bash git clone https://github.com/matthansen0/speedtest-PIonPY.git``
+``git clone https://github.com/matthansen0/speedtest-PIonPY``
 
 ``cd speedtest-PIonPY``
 
@@ -43,17 +43,17 @@ To get started, follow these simple steps:
 
 Ensure you have Python 3.x installed on your system. Then, install the required Python libraries:
 
-For Arm and AMD:
+**Recommended: Use a Python virtual environment (works for AMD, ARM, and Intel):**
 
-``sudo apt install python3-pip``
+```bash
+sudo apt install python3-pip python3-venv -y
+```
 
-``pip install -r requirements.txt``
-
-For Intel:
-
-``sudo apt install python3-pip pypy``
-
-``pypy3 -m pip install -r requirements.txt``
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
 
 3.) **Run the Benchmark**
 
@@ -69,7 +69,15 @@ For AMD: `python3 amdPi.py`
 
 For Intel:
 
-``pypy3 intelPi.py``
+To use PyPy on Intel, first install it and set up a PyPy virtual environment:
+
+```bash
+sudo apt install pypy3 pypy3-venv
+pypy3 -m venv pypy-venv
+source pypy-venv/bin/activate
+pip install mpmath
+pypy3 intelPi.py
+```
 
 ![Intel Example](media/intel_example.png "Intel Example")
 
