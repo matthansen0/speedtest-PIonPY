@@ -55,13 +55,21 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-3.) **Run the Benchmark**
+3.) **Prepare Environment (One-Time or Re-Runnable)**
 
-Single command (auto-detects architecture, uses all cores):
+```bash
+python3 prepare_benchmark.py
+```
+
+This creates/updates `./venv`, installs dependencies, and (optionally) suggests PyPy.
+
+4.) **Run the Benchmark**
 
 ```bash
 python3 run_benchmark.py
 ```
+
+You do NOT need to `source venv/bin/activate`; the benchmark will automatically re-exec inside the local venv and (on Intel/AMD) a PyPy JIT venv if available.
 
 Output shows detected vendor, elapsed time (color-coded), last 50 digits (approximate), and writes a JSON results file (e.g. `results_*.json`).
 
@@ -69,11 +77,45 @@ Automatic optimizations now included:
 * Warm-up pass (1% of iterations) for cache/JIT stabilization
 * Core affinity pinning (best-effort) to reduce migration
 * ARM big.LITTLE frequency weighting (allocates more work to faster cores)
-* Intel auto re-exec under PyPy if available for JIT speedups
+* Intel/AMD auto re-exec under PyPy via a local managed venv (.pypy_venv) for JIT speedups (safe under PEP 668)
 * JSON result artifact for later comparison
 * Always-on per-segment (10%) progress reporting
 
 Progress checkpoints (10% per worker segment) are displayed by default. Iteration count is fixed internally (10,000) for consistent cross-architecture comparison; a warm-up (unreported) precedes the main run.
+
+Typical full usage flow (no flags anywhere):
+
+```bash
+python3 prepare_benchmark.py
+python3 run_benchmark.py
+```
+
+### PyPy Optimization Details
+
+When running on Intel or AMD, the script attempts to speed up execution by:
+
+1. Detecting a `pypy3` executable.
+2. Creating a project-local virtual environment at `.pypy_venv/` (if not already present).
+3. Ensuring `mpmath` is installed inside that venv.
+4. Re‑executing the benchmark under that PyPy environment.
+
+This approach avoids installing packages into the system Python (respects PEP 668) and keeps everything self‑contained in the repository folder.
+
+Environment controls:
+
+```bash
+# Skip attempting PyPy entirely (force current interpreter)
+SKIP_PYPY=1 python3 run_benchmark.py
+```
+
+If you do not have PyPy installed yet on Debian/Ubuntu:
+
+```bash
+sudo apt update
+sudo apt install pypy3 pypy3-venv -y
+```
+
+After that, just run the benchmark again—`.pypy_venv` will be created automatically on first use.
 
 ![Intel Example](media/intel_example.png "Intel Example")
 

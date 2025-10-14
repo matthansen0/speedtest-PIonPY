@@ -27,6 +27,8 @@ import sys
 import time
 import json
 import shutil
+import subprocess
+from pathlib import Path
 from datetime import datetime
 from multiprocessing import Pool, cpu_count
 
@@ -35,6 +37,34 @@ WARMUP_FRACTION = 0.01  # 1% of iterations (minimum 100) to warm caches / JIT
 SHOW_PROGRESS = True  # always show per-segment progress by default
 PIN_AFFINITY = True   # try to pin each worker to a distinct core
 WEIGHT_ARM_FREQ = True  # weight ARM segments by max core frequency
+
+
+def _maybe_reexec_into_project_venv():
+    """If a local 'venv' directory exists and we're not inside any venv, re-exec under it.
+
+    This allows a user to simply run `python3 run_benchmark.py` after having executed
+    the prereq script without needing to remember to 'source venv/bin/activate'.
+    Guarded by env var PIONPY_VENV_ACTIVE to prevent recursion. Silent fallback on error.
+    """
+    if os.environ.get('PIONPY_VENV_ACTIVE'):
+        return
+    # Detect if already in a venv
+    in_venv = (hasattr(sys, 'real_prefix') or (getattr(sys, 'base_prefix', sys.prefix) != sys.prefix))
+    if in_venv:
+        return
+    project_root = Path(__file__).parent.resolve()
+    venv_dir = project_root / 'venv'
+    candidate = venv_dir / 'bin' / 'python'
+    if not candidate.exists():
+        return
+    try:
+        print(f"[info] Re-executing under local venv: {candidate}")
+        env = os.environ.copy()
+        env['PIONPY_VENV_ACTIVE'] = '1'
+        os.execve(str(candidate), [str(candidate)] + sys.argv, env)
+    except Exception as e:
+        print(f"[warn] Could not re-exec into venv (continuing with current interpreter): {e}")
+        return
 
 
 def ensure_mpmath():
@@ -168,16 +198,60 @@ def approximate_parallel(iterations: int, vendor: str):
 
 
 def _maybe_reexec_with_pypy(vendor: str):
-    if vendor == 'Intel' and 'pypy' not in sys.version.lower():
-        pypy = shutil.which('pypy3')
-        if pypy:
-            print(f"[info] Re-executing under PyPy for Intel optimization: {pypy}")
-            os.execv(pypy, [pypy] + sys.argv)
-        else:
-            print('[hint] PyPy not found; continuing with current interpreter.')
+    """Attempt to re-exec under a local PyPy virtual environment for x86 vendors.
+
+    Improvements over the previous simplistic approach:
+      * Creates a project-local .pypy_venv so we never install into the system environment (PEP 668 safe).
+      * Installs mpmath inside that venv if missing.
+      * Respects SKIP_PYPY=1 to allow the user to force using the current interpreter.
+      * Uses an env guard (PIONPY_PYPY_ACTIVE) to prevent infinite recursion.
+      * Falls back silently to current interpreter on any failure.
+    """
+    if os.environ.get("SKIP_PYPY"):
+        return
+    if os.environ.get("PIONPY_PYPY_ACTIVE"):
+        return  # already running inside PyPy venv
+    if 'pypy' in sys.version.lower():
+        return  # already PyPy (possibly user managed)
+    if vendor not in ("Intel", "AMD", "x86"):
+        return
+
+    pypy = shutil.which('pypy3')
+    if not pypy:
+        return  # silently ignore if PyPy not installed
+
+    project_root = Path(__file__).parent.resolve()
+    venv_dir = project_root / '.pypy_venv'
+    python_path = venv_dir / 'bin' / 'python'
+
+    try:
+        if not venv_dir.exists():
+            print(f"[info] Creating local PyPy venv at {venv_dir} ...")
+            subprocess.run([pypy, '-m', 'venv', str(venv_dir)], check=True)
+        # Verify python exists
+        if not python_path.exists():
+            print('[warn] PyPy venv creation did not produce expected python binary; skipping PyPy optimization.')
+            return
+        # Ensure mpmath inside PyPy venv
+        code_check = 'import mpmath; print(1)'
+        check_res = subprocess.run([str(python_path), '-c', code_check], capture_output=True, text=True)
+        if check_res.returncode != 0:
+            print('[info] Installing mpmath inside local PyPy venv...')
+            install_res = subprocess.run([str(python_path), '-m', 'pip', 'install', '--disable-pip-version-check', 'mpmath'])
+            if install_res.returncode != 0:
+                print('[warn] Failed to install mpmath in PyPy venv; falling back to current interpreter.')
+                return
+        print(f"[info] Re-executing under local PyPy venv: {python_path}")
+        env = os.environ.copy()
+        env['PIONPY_PYPY_ACTIVE'] = '1'
+        os.execve(str(python_path), [str(python_path)] + sys.argv, env)
+    except Exception as e:
+        print(f"[warn] PyPy optimization skipped due to error: {e}")
+        return
 
 
 def main():
+    _maybe_reexec_into_project_venv()
     ensure_mpmath()
     vendor = detect_vendor()
     print(f"[info] Detected architecture/vendor: {vendor}")
