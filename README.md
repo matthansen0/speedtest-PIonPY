@@ -64,8 +64,6 @@ This creates/updates `./venv`, installs dependencies (from `requirements.txt`), 
 python3 run_benchmark.py
 ```
 
-You do NOT need to `source venv/bin/activate`; the benchmark will automatically re-exec inside the local venv and (on Intel/AMD) a PyPy JIT venv if available.
-
 Output shows detected vendor, elapsed time (color-coded), last 50 digits (approximate), and writes a JSON results file (e.g. `results_*.json`).
 
 Automatic optimizations now included:
@@ -78,12 +76,20 @@ Automatic optimizations now included:
 
 Progress checkpoints (10% per worker segment) are displayed by default. Iteration count is fixed internally (10,000) for consistent cross-architecture comparison; a warm-up (unreported) precedes the main run.
 
-Typical full usage flow (no flags anywhere):
+### Results
 
-```bash
-python3 prepare_benchmark.py
-python3 run_benchmark.py
-```
+x64 Intel CPU on Azure Ds2 v5, $78.11/mo
+
+<img src="media/intel.png" alt="Intel CPU" title="Intel CPU" width="400"/>
+
+x64 AMD CPU on Azure D2ads v5, $83.95/mo
+
+<img src="media/amd.png" alt="Intel CPU" title="Intel CPU" width="400"/>
+
+RISC ARM CPU on Azure D2ps v6, $56.94/mo
+
+<img src="media/arm.png" alt="Intel CPU" title="Intel CPU" width="400"/>
+
 
 ### PyPy Optimization Details
 
@@ -96,25 +102,9 @@ When running on Intel or AMD, the script attempts to speed up execution by:
 
 This approach avoids installing packages into the system Python (respects PEP 668) and keeps everything self‑contained in the repository folder.
 
-Environment controls:
-
-```bash
-# Skip attempting PyPy entirely (force current interpreter)
-SKIP_PYPY=1 python3 run_benchmark.py
-```
-
-If you do not have PyPy installed yet on Debian/Ubuntu:
-
-```bash
-sudo apt update
-sudo apt install pypy3 pypy3-venv -y
-```
-
-After that, just run the benchmark again—`.pypy_venv` will be created automatically on first use.
-
-![Intel Example](media/intel_example.png "Intel Example")
-
 ## Notes on Accuracy & Future Enhancements
+
+The computation done here is indicative of one type of compute workload, each chipset has their beneifts and there are cases where they will all outperform each other. The purpose here is simply to show that ARM CPUs, under the right circumstances can be more cost effective while simultaniously being more effecient than x64 CPUs.
 
 The current single-script benchmark uses an approximate segmented parallel method to stress CPUs uniformly. It is suitable for relative throughput comparisons (the goal of this project) but is not a mathematically strict parallelization of the Chudnovsky series. Future improvements may include:
 
@@ -133,10 +123,6 @@ Here are the next steps for the SpeedTest-PiOnPy project to enhance its function
 
 - [ ] **Optimize Algorithm Efficiency**: Further refine the mathematical algorithms to improve calculation speed without sacrificing accuracy.
 - [ ] **Enhance User Interface**: Develop a more interactive and user-friendly interface for the benchmarking tools.
-
-## Acknowledgments
-
-This project owes its existence to the invaluable assistance provided by ChatGPT and GitHub Copilot. Their contributions have been instrumental in shaping the project's direction and implementation. In the spirit of good humor, any issues encountered will be cheerfully blamed on them. :smile:
 
 ## License
 
