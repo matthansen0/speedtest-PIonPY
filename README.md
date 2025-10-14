@@ -35,9 +35,11 @@ To get started, follow these simple steps:
 
 1.) **Clone the Repository**
 
-``git clone https://github.com/matthansen0/speedtest-PIonPY``
+```bash
+git clone https://github.com/matthansen0/speedtest-PIonPY
+cd speedtest-PIonPY
+```
 
-``cd speedtest-PIonPY``
 
 2.) **(Optional) Ensure Python Base Tools**
 
