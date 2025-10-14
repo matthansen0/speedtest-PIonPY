@@ -21,7 +21,7 @@ The Pi-on-Py Speedtest leverages advanced mathematical algorithms and Python's m
 
 The SpeedTest-PiOnPy project is designed to run on multiple CPU architectures, including Arm, AMD, and Intel. Each of these architectures has unique characteristics that can impact the performance of computational tasks. Here's a brief overview:
 
-- **Arm**: Known for its power efficiency, Arm processors are widely used in mobile devices and increasingly in servers and desktops. The project's optimizations for Arm focus on maximizing performance per watt, making it ideal for energy-conscious environments.
+- **Arm**: Known for its power efficiency, Arm processors are widely used in mobile devices and increasingly in servers and desktops. The project's optimizations for Arm leverage multiprocessing to distribute the Pi calculation workload across all available CPU cores, maximizing performance per watt and making it ideal for energy-conscious environments.
 
 - **AMD**: AMD CPUs, particularly those with the EPYC architecture, offer a high number of cores and threads, making them well-suited for parallel processing tasks. The optimizations for AMD aim to leverage this multi-threading capability to speed up the Pi calculation process.
 
@@ -81,7 +81,7 @@ I welcome contributions from the community! Whether it's adding new optimization
 
 Here are the next steps for the SpeedTest-PiOnPy project to enhance its functionality and user experience:
 
-- [ ] **Community Review on Arm Optimization**: Having run these tests multiple ways, I assume there are significant optimizations that could be made to the Arm benchmark.
+- [x] **Community Review on Arm Optimization**: Having run these tests multiple ways, I assume there are significant optimizations that could be made to the Arm benchmark. **Updated to use multiprocessing for parallel computation across all CPU cores.**
 - [ ] **Optimize Algorithm Efficiency**: Further refine the mathematical algorithms to improve calculation speed without sacrificing accuracy.
 - [ ] **Enhance User Interface**: Develop a more interactive and user-friendly interface for the benchmarking tools.
 
