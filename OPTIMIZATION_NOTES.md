@@ -1,47 +1,72 @@
-# Pi-on-Py Optimization Notes
+# Design Rationale
 
-This document summarizes the automatic optimizations now applied by `run_benchmark.py` and outlines potential future enhancements.
+Why the benchmark is built the way it is, and what was rejected.
 
-## Current Automatic Optimizations
+## The problem being solved
 
-| Optimization | Description | Rationale |
-|--------------|-------------|-----------|
-| Warm-up Pass | 1% of total iterations (min 100) run before timing | Stabilizes caches, triggers JIT (PyPy) |
-| Core Affinity (best-effort) | Each worker process pins to a distinct core (Linux only) | Reduces context switching & migration |
-| ARM Frequency Weighting | Segment sizes scaled by per-core `cpuinfo_max_freq` | Better utilization on big.LITTLE designs |
-| Intel PyPy Auto Re-exec | If Intel + PyPy available and not already active, restarts under PyPy | JIT often improves loop throughput |
-| JSON Result Output | Stores metadata + timing in `results_<epoch>.json` | Enables automated aggregation & comparisons |
-| Progress Checkpoints | 10% per segment progress lines | Visibility into long runs |
-| Color-Coded Elapsed Time | Green (<5s), Yellow (<15s), Red (>=15s) | Quick visual performance cue |
+"Is ARM cheaper?" is not answerable by a benchmark. Two questions are:
 
-## Approximate Method Caveat
-The current parallelization splits the Chudnovsky-like recurrence state across segments naively. This produces a π approximation adequate for **relative throughput** but is **not** mathematically exact. For correctness-oriented use, a future exact mode should compute each term independently or employ binary splitting.
+1. **What does this hardware cost per unit of work?** — a property of the machine and its price.
+2. **What did optimizing the code buy me on this hardware?** — a property of the software, which differs by architecture.
 
-## Planned / Potential Future Enhancements
-1. Exact Mode (`--mode exact`): Independent term computation or binary splitting tree.
-2. Binary Splitting High-Precision Path: Efficient for large digit counts; uses structured product/reduction.
-3. JSON Aggregator Script: Combine multiple run artifacts into a comparative table (e.g., CSV/Markdown export).
-4. Thermal & Frequency Sampling: Optional capture of `cpu MHz`, temperature sensors, throttle events.
-5. Lightweight Result Validation: Compare first N digits to a trusted π prefix to detect significant deviations.
-6. Optional Quiet Mode: Suppress per-segment progress for cleaner CI logs.
-7. Multiple Iteration Sets: Automatically run short/medium/long sequences and summarize scaling.
-8. gmpy2 Integration (if present): Faster big integer and rational arithmetic acceleration.
+The second question is the one most migration write-ups skip, and it is usually the larger number. Conflating the two is why ARM cost comparisons tend to be unconvincing: a reader cannot tell whether the win came from the silicon, the core count, the price sheet, or from someone finally recompiling the hot path.
 
-## Design Rationale
-- **Single Entry Point:** Minimizes user friction and configuration divergence across architectures.
-- **Best-Effort Pinning:** Avoids hard failure on systems lacking permission for `sched_setaffinity`.
-- **Minimal External Dependencies:** Only `mpmath`; optional advanced libs intentionally not auto-installed to avoid environment conflicts.
+The tier structure exists to separate them.
 
-## Adding an Exact Mode (Roadmap Sketch)
-1. Implement per-term exact Chudnovsky term computation using integer arithmetic for `(6k)! / ((3k)!(k!)^3)` via multiplicative updates.
-2. Parallelize by dividing k-range into blocks; each worker returns high-precision partial sum (pairwise summation for stability).
-3. (Advanced) Implement binary splitting for improved asymptotics and fewer large factorial intermediates.
-4. Provide a validation harness comparing exact vs approximate elapsed times and digit agreement.
+## Rules the design has to obey
 
-## Notes on Interpreters
-- **PyPy on Intel:** Largest relative gain expected due to strong JIT + robust single-core performance.
-- **CPython on ARM:** Stable baseline; PyPy gains vary depending on workload mix (integer vs object overhead).
-- **CPython on AMD:** Large core counts benefit primarily from process-level parallelism; JIT impact secondary.
+### 1. Total work must not depend on the machine
 
----
-Contributions and profiling data are welcome. Open an issue or PR to propose additional optimizations.
+The v1 benchmark set its segment count to `cpu_count()` and restarted the series recurrence in each segment, so total work fell as roughly `p²`. A 16-way split did 113x less work than a 1-way split — before any parallelism was applied. Any measurement built on that is unrecoverable.
+
+Binary splitting over a **fixed** chunk count fixes this. `--chunks` is recorded in every result file and must match across machines being compared.
+
+### 2. A wrong answer must not be able to win
+
+Speed is only meaningful if the work was actually done. Every tier is verified digit-for-digit against `mpmath`'s independently implemented fixed-point π, and repetitions are compared to each other to catch non-determinism. Failures are reported, not silently ranked.
+
+The SHA-256 of the digit string travels in the result file so cross-machine comparison can assert that both machines produced the same output.
+
+### 3. One lever per tier
+
+| Tier | Kernel | Backend | Cores |
+|---|---|---|---|
+| `baseline` | naive linear series | Python int | 1 |
+| `algorithm` | binary splitting | Python int | 1 |
+| `native` | binary splitting | GMP (gmpy2) | 1 |
+| `parallel` | binary splitting | Python int | all |
+| `optimized` | binary splitting | GMP (gmpy2) | all |
+
+`algorithm` and `parallel` use the *same* chunk decomposition executed serially versus across a pool, so their ratio is pure parallel scaling with no algorithmic difference mixed in.
+
+### 4. Report the distribution, and the conditions
+
+A single timing on a shared cloud host is a rumour. Each tier gets a discarded warm-up repetition, then repeats to a wall-clock budget. Median is the default cost metric because it reflects sustained behaviour; `--metric min_seconds` is available for best-case capability.
+
+Hypervisor steal time and involuntary context switches are measured across the whole suite. If the host was oversubscribed, the report says so instead of letting the reader assume the CPU was slow.
+
+## Decisions and rejected alternatives
+
+**Fixed chunk count instead of chunks-per-core.** Per-core chunking would load-balance slightly better but would reintroduce machine-dependent work. Load balancing is instead handled dynamically (`chunksize=1`, results reordered by index), which keeps the decomposition fixed and the result deterministic.
+
+**gmpy2/GMP as the "native" lever.** GMP has hand-written assembly for both `x86-64` and `aarch64`, so the tier measures something real about porting a numeric stack, and the gain legitimately differs by architecture. Rejected alternatives: NumPy (wrong problem shape for big integers), hand-written intrinsics (not representative of what teams actually do).
+
+**PyPy removed as an architecture-conditional path.** v1 re-executed under PyPy only for Intel/AMD, which biased every comparison. The interpreter is now recorded as metadata; run the suite under whatever you like, but compare like with like.
+
+**Affinity pinning removed.** v1 pinned worker *i* to CPU *i*, which is wrong inside a container whose allowed CPU set may not start at zero or be contiguous. The harness now reads `sched_getaffinity` and the cgroup quota to decide worker count, and leaves placement to the scheduler.
+
+**Naive tier kept, deliberately.** It is slow and it scales badly. That is the point: it is the code most people actually ship, and it sets the denominator for "what was optimization worth".
+
+**Prices are inputs, never measurements.** `pricing.json` carries an `as_of` date and the tool warns when it is missing or stale. Hardcoded cloud prices go wrong quietly.
+
+## Known gaps
+
+1. **Single workload family.** Big-integer arithmetic only. A defensible fleet migration argument needs a mix — memory-bandwidth-bound, float/SIMD, branch-heavy, and allocation-heavy kernels. This is the most valuable contribution the project could take.
+2. **No energy measurement.** Perf-per-watt is a large part of the ARM argument and is not captured. RAPL on x86 and vendor-specific counters on ARM are not portable enough to compare directly, and are usually unavailable inside a VM.
+3. **No thermal or frequency sampling during the run.** Sustained-clock behaviour under load is not tracked, only the advertised maximum.
+4. **Parallel scaling is bounded by the serial combine step.** At high core counts the final reduction becomes the limit. That is a genuine property of the algorithm, but it means the parallel tiers understate very wide machines.
+5. **No reserved/spot pricing model.** Only a flat hourly or monthly rate.
+
+## Result schema
+
+Result files carry `"schema": 2`. The comparison tool rejects anything else, including all v1 output, because those runs are not comparable to these.

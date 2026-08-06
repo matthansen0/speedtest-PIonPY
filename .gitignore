@@ -7,3 +7,8 @@ __pycache__/
 venv/
 env/
 ENV/
+.pypy_venv/
+
+# Benchmark artifacts
+results/
+results_*.json
