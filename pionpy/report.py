@@ -130,7 +130,10 @@ def render_optimization_value(report: dict) -> str:
     if not val:
         return ""
     speedup = val["optimization_speedup"]
-    lines = [bold("Value of optimizing this workload on this hardware")]
+    complete = val.get("optimization_complete", val.get("best_tier") == "optimized")
+    heading = ("Value of optimizing this workload on this hardware" if complete else
+               "Value of available optimizations on this hardware")
+    lines = [bold(heading)]
     lines.append(f"  {val['baseline_tier']} -> {val['best_tier']}: "
                  f"{val['baseline_seconds']:.3f}s -> {val['best_seconds']:.3f}s  = "
                  + cyan(f"{speedup:.2f}x faster"))
@@ -147,8 +150,11 @@ def render_optimization_value(report: dict) -> str:
         lines.append("")
         lines.append(f"  Cost per 1k runs   ${val['cost_per_1k_runs_baseline']:,.4f}"
                      f"  ->  ${val['cost_per_1k_runs_optimized']:,.4f}   ({drop})")
-        lines.append("  For this workload the optimized code makes the VM behave like a "
+        code_label = "optimized code" if complete else "best available tier"
+        lines.append(f"  For this workload the {code_label} makes the VM behave like a "
                      + effective + " machine.")
+    if not complete:
+        lines.append("  " + yellow("! Full optimization result unavailable; install gmpy2/GMP and re-run."))
     return "\n".join(lines)
 
 
@@ -197,49 +203,57 @@ def render_report(report: dict) -> str:
     return f"{_rule()}\n{body}\n{_rule()}"
 
 
-def render_comparison_markdown(comparison: dict) -> str:
-    rows = comparison["rows"]
+def _md_table(head: list[str], rows: list[list[str]]) -> str:
+    return "\n".join(["| " + " | ".join(head) + " |",
+                      "|" + "|".join(["---"] * len(head)) + "|",
+                      *["| " + " | ".join(r) + " |" for r in rows]])
+
+
+def render_results_matrix(rows: list[dict], metric: str = "median_seconds") -> str:
     if not rows:
-        return "_No comparable results found._"
-    has_price = any(r.get("runs_per_dollar") for r in rows)
-    head = ["Machine", "Arch", "vCPU", "Phys cores", "SMT", "Time", "Runs/hr"]
+        return "_No results found._"
+    has_price = any(r.get("cost_per_1k_runs") for r in rows)
+    head = ["Machine", "Arch", "Tier", "Cores", "Time", "vs baseline", "Runs/hr"]
     if has_price:
-        head += ["$/month", "Runs per $", "Value vs base"]
-    head += ["Steal", "Opt. speedup"]
+        head += ["Cost / 1k runs", "Runs per $"]
 
-    lines = ["| " + " | ".join(head) + " |",
-             "|" + "|".join(["---"] * len(head)) + "|"]
+    body = []
     for r in rows:
-        cells = [
-            str(r["label"]), r["arch"], str(r["vcpus"]),
-            str(r.get("physical_cores") or "?"),
-            "yes" if r.get("smt") else "no",
-            f"{r['seconds']:.3f}s", f"{r['runs_per_hour']:,.1f}",
-        ]
-        if has_price:
-            cells += [
-                f"${r['price_per_month']:,.2f}" if r.get("price_per_month") else "-",
-                f"{r['runs_per_dollar']:,.1f}" if r.get("runs_per_dollar") else "-",
-                ("baseline" if r.get("is_baseline")
-                 else f"{r['value_delta_percent']:+.1f}%" if r.get("value_delta_percent") is not None
-                 else "-"),
+        if r["status"] != "ok":
+            cells = [r["label"], r["arch"], f"`{r['tier']}`", "-",
+                     r.get("skipped_reason") or r["status"], "-", "-"]
+            cells += ["-", "-"] if has_price else []
+        else:
+            cells = [
+                r["label"], r["arch"], f"`{r['tier']}`", str(r.get("workers") or "-"),
+                f"{r['seconds']:.3f}s",
+                f"{r['vs_baseline']:.2f}x" if r.get("vs_baseline") else "-",
+                f"{r['runs_per_hour']:,.1f}",
             ]
-        cells += [
-            f"{r['steal_percent']:.2f}%" if r.get("steal_percent") is not None else "-",
-            f"{r['optimization_speedup']:.2f}x" if r.get("optimization_speedup") else "-",
-        ]
-        lines.append("| " + " | ".join(cells) + " |")
+            if has_price:
+                cells += [f"${r['cost_per_1k_runs']:,.4f}",
+                          f"{r['runs_per_dollar']:,.1f}"]
+        body.append(cells)
 
-    notes = [""]
-    notes.append(f"_Tier compared: `{comparison['tier']}` using `{comparison['metric']}`. "
-                 f"Baseline machine: {comparison['baseline']}._")
-    if not comparison.get("comparable"):
-        notes.append("")
-        notes.append("> **Warning:** these runs are not directly comparable - "
-                     "the digit targets differ or the computed results do not match. "
-                     "Re-run every machine with the same `--size`.")
-    elif comparison.get("digests_match"):
-        notes.append("")
-        notes.append("_Every machine produced a bit-identical result "
-                     "(matching SHA-256 of the digit string), so the work performed was identical._")
-    return "\n".join(lines + notes)
+    note = (f"_Timing metric: `{metric}`. `vs baseline` compares each machine "
+            "against its own baseline tier, not against another machine._")
+    return _md_table(head, body) + "\n\n" + note
+
+
+def render_machines_markdown(machines: list[dict]) -> str:
+    if not machines:
+        return ""
+    head = ["Machine", "Arch", "CPU", "vCPU", "Phys cores", "SMT", "GMP",
+            "$/hour", "$/month", "Steal"]
+    body = []
+    for m in machines:
+        body.append([
+            m["label"], m["arch"], m.get("model") or "unknown",
+            str(m["vcpus"]), str(m.get("physical_cores") or "?"),
+            "yes" if m.get("smt") else "no",
+            m.get("gmp") or "none",
+            f"${m['price_per_hour']:.5f}" if m.get("price_per_hour") else "-",
+            f"${m['price_per_month']:,.2f}" if m.get("price_per_month") else "-",
+            f"{m['steal_percent']:.2f}%" if m.get("steal_percent") is not None else "-",
+        ])
+    return _md_table(head, body)

@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Aggregate benchmark JSON files into a cross-architecture cost comparison.
+"""Print saved benchmark results side by side, one row per machine and tier.
 
     python3 compare_results.py results/
-    python3 compare_results.py results/ --tier optimized --baseline intel-box
+    python3 compare_results.py results/ --tier optimized
     python3 compare_results.py results/ --markdown-out COMPARISON.md
 
-Refuses to present machines as comparable unless they ran the same digit
-target and produced the same verified result.
+This lays the measurements out and stops there. It does not pick a winner, a
+reference machine, or a headline tier: which pair of rows matters depends on
+the question being asked, so that choice is left to the reader.
 """
 from __future__ import annotations
 
@@ -38,40 +39,14 @@ def load_reports(paths: list[Path]) -> list[dict]:
     return reports
 
 
-def render_optimization_table(reports: list[dict]) -> str:
-    """Per-machine view of what each optimization lever was worth."""
-    lever_keys = ["algorithm", "native_math_library", "parallelism"]
-    head = ["Machine", "Arch", "Baseline", "Optimized", "Total speedup",
-            *[k.replace("_", " ") for k in lever_keys], "Effective $/mo"]
-    lines = ["| " + " | ".join(head) + " |",
-             "|" + "|".join(["---"] * len(head)) + "|"]
-    for rep in reports:
-        val = rep.get("optimization_value") or {}
-        if not val:
-            continue
-        levers = val.get("lever_speedups") or {}
-        cells = [
-            rep.get("label", "?"), rep["environment"]["cpu"]["arch"],
-            f"{val['baseline_seconds']:.3f}s", f"{val['best_seconds']:.3f}s",
-            f"{val['optimization_speedup']:.2f}x",
-            *[f"{levers[k]:.2f}x" if k in levers else "-" for k in lever_keys],
-            f"${val['effective_price_per_month']:,.2f}"
-            if val.get("effective_price_per_month") else "-",
-        ]
-        lines.append("| " + " | ".join(cells) + " |")
-    return "\n".join(lines)
-
-
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("paths", nargs="+", type=Path, help="result files or directories")
-    p.add_argument("--tier", default="optimized",
-                   choices=[t.key for t in harness.TIERS],
-                   help="tier to compare machines at")
+    p.add_argument("--tier", choices=[t.key for t in harness.TIERS],
+                   help="show only this tier; by default every tier is shown")
     p.add_argument("--metric", default="median_seconds",
                    choices=["median_seconds", "min_seconds"])
-    p.add_argument("--baseline", help="label of the machine to treat as 100%%")
     p.add_argument("--markdown-out", type=Path, help="also write the tables to a file")
     args = p.parse_args(argv)
 
@@ -80,31 +55,36 @@ def main(argv=None) -> int:
         print("[error] no usable result files found", file=sys.stderr)
         return 2
 
-    comparison = cost.compare(reports, args.baseline, args.metric, args.tier)
+    rows = cost.results_matrix(reports, args.metric, args.tier)
+    boxes = cost.machines(reports)
+    checks = cost.integrity(reports)
 
     sections = [
-        f"## Hardware cost efficiency (`{args.tier}` tier)",
+        "## Results",
         "",
-        report.render_comparison_markdown(comparison),
+        report.render_results_matrix(rows, args.metric),
         "",
-        "## Value of optimization, per machine",
+        "## Machines",
         "",
-        render_optimization_table(reports),
-        "",
-        "_Effective $/mo is the real price divided by the total optimization speedup: "
-        "what the machine would have to cost for unoptimized code to be as cheap "
-        "to run as the optimized code is today._",
+        report.render_machines_markdown(boxes),
     ]
-    noisy = [r["label"] for r in comparison["rows"] if r.get("noisy")]
-    stealy = [r["label"] for r in comparison["rows"]
-              if (r.get("steal_percent") or 0) >= 1]
-    if noisy or stealy:
-        sections += ["", "### Caveats", ""]
-        if noisy:
-            sections.append(f"- High run-to-run variance on: {', '.join(noisy)}. Re-run when idle.")
-        if stealy:
-            sections.append(f"- Hypervisor steal time above 1% on: {', '.join(stealy)}. "
-                            "The host was shared; results understate real capability.")
+
+    notes = []
+    if not checks["same_size"]:
+        notes.append("- Digit targets differ across runs ("
+                     + ", ".join(f"{d:,}" for d in checks["digits"])
+                     + "); re-run every machine with the same `--size`.")
+    if not checks["digests_match"]:
+        notes.append("- Machines did not produce identical digits of pi, "
+                     "so the work performed was not the same.")
+    noisy = sorted({r["label"] for r in rows if r.get("noisy")})
+    if noisy:
+        notes.append(f"- Run-to-run variance above 5% on: {', '.join(noisy)}.")
+    stealy = sorted({m["label"] for m in boxes if (m.get("steal_percent") or 0) >= 1})
+    if stealy:
+        notes.append(f"- Hypervisor steal above 1% on: {', '.join(stealy)}.")
+    if notes:
+        sections += ["", "### Caveats", "", *notes]
 
     text = "\n".join(sections)
     print(text)

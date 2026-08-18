@@ -104,6 +104,7 @@ def annotate(report: dict, resolved: dict, metric: str = "median_seconds") -> di
         summary = {
             "baseline_tier": baseline["key"],
             "best_tier": best["key"],
+            "optimization_complete": "optimized" in tiers,
             "baseline_seconds": round(baseline[metric], 4),
             "best_seconds": round(best[metric], 4),
             "optimization_speedup": round(speedup, 2),
@@ -138,64 +139,77 @@ def annotate(report: dict, resolved: dict, metric: str = "median_seconds") -> di
     return report
 
 
-def compare(reports: list[dict], baseline_label: str | None = None,
-            metric: str = "median_seconds", tier_key: str = "optimized") -> dict:
-    """Cross-machine comparison at a single tier.
+def results_matrix(reports: list[dict], metric: str = "median_seconds",
+                   tier_key: str | None = None) -> list[dict]:
+    """Every machine at every tier, unranked and in run order.
 
-    Reports perf-per-dollar relative to a chosen baseline machine, plus the
-    per-physical-core view that explains where the difference comes from.
+    No machine is nominated as the reference and no tier is nominated as the
+    result, so the reader chooses the pair that matches the question.
     """
     rows = []
     for rep in reports:
-        tier = next((t for t in rep["tiers"] if t["key"] == tier_key and t["status"] == "ok"), None)
-        if not tier:
-            continue
+        env = rep["environment"]
+        label = rep.get("label") or env["cpu"].get("model") or env["hostname"]
+        price = (rep.get("pricing") or {}).get("price_per_hour")
+        base = next((t for t in rep["tiers"]
+                     if t["key"] == "baseline" and t["status"] == "ok"), None)
+        for tier in rep["tiers"]:
+            if tier_key and tier["key"] != tier_key:
+                continue
+            row = {
+                "label": label,
+                "arch": env["cpu"]["arch"],
+                "tier": tier["key"],
+                "lever": tier.get("lever"),
+                "status": tier["status"],
+                "skipped_reason": tier.get("skipped_reason"),
+                "workers": tier.get("workers"),
+                "noisy": tier.get("noisy"),
+                "digest": tier.get("digest"),
+                "digits": rep["digits"],
+            }
+            if tier["status"] == "ok":
+                seconds = tier[metric]
+                runs_per_hour = 3600.0 / seconds
+                row["seconds"] = round(seconds, 4)
+                row["runs_per_hour"] = round(runs_per_hour, 2)
+                if base:
+                    row["vs_baseline"] = round(base[metric] / seconds, 2)
+                if price is not None:
+                    row["cost_per_1k_runs"] = round(price / runs_per_hour * 1000, 6)
+                    row["runs_per_dollar"] = round(runs_per_hour / price, 2)
+            rows.append(row)
+    return rows
+
+
+def machines(reports: list[dict]) -> list[dict]:
+    """One row per machine: what it is, and what it costs to rent."""
+    out = []
+    for rep in reports:
         env = rep["environment"]
         price = (rep.get("pricing") or {}).get("price_per_hour")
-        seconds = tier[metric]
-        row = {
+        out.append({
             "label": rep.get("label") or env["cpu"].get("model") or env["hostname"],
             "arch": env["cpu"]["arch"],
             "model": env["cpu"].get("model"),
             "vcpus": env["topology"]["logical_cpus"],
             "physical_cores": env["topology"].get("physical_cores"),
             "smt": env["topology"].get("smt_enabled"),
+            "gmp": (env.get("interpreter") or {}).get("gmp"),
             "digits": rep["digits"],
-            "seconds": round(seconds, 4),
-            "runs_per_hour": round(3600.0 / seconds, 2),
             "price_per_hour": price,
             "price_per_month": round(price * HOURS_PER_MONTH, 2) if price else None,
             "steal_percent": (rep.get("runtime") or {}).get("steal_percent"),
-            "noisy": tier.get("noisy"),
-            "digest": tier.get("digest"),
-            "optimization_speedup": (rep.get("optimization_value") or {}).get("optimization_speedup"),
-        }
-        if price:
-            row["runs_per_dollar"] = round(3600.0 / seconds / price, 2)
-            row["cost_per_1k_runs"] = round(price / (3600.0 / seconds) * 1000, 6)
-        rows.append(row)
+        })
+    return out
 
-    if not rows:
-        return {"tier": tier_key, "rows": [], "digests_match": True}
 
-    digests = {r["digest"] for r in rows if r["digest"]}
-    sizes = {r["digits"] for r in rows}
-
-    base = next((r for r in rows if r["label"] == baseline_label), None) or rows[0]
-    for row in rows:
-        row["is_baseline"] = row is base
-        row["relative_speed"] = round(base["seconds"] / row["seconds"], 3)
-        if row.get("runs_per_dollar") and base.get("runs_per_dollar"):
-            row["relative_value"] = round(
-                row["runs_per_dollar"] / base["runs_per_dollar"], 3)
-            if row is not base:
-                row["value_delta_percent"] = round((row["relative_value"] - 1) * 100, 1)
-
+def integrity(reports: list[dict]) -> dict:
+    """Whether these runs are eligible to be compared at all."""
+    digests = {t["digest"] for rep in reports for t in rep["tiers"] if t.get("digest")}
+    sizes = {rep["digits"] for rep in reports}
     return {
-        "tier": tier_key,
-        "metric": metric,
-        "baseline": base["label"],
-        "rows": sorted(rows, key=lambda r: r.get("runs_per_dollar") or 0, reverse=True),
         "digests_match": len(digests) <= 1,
-        "comparable": len(sizes) == 1 and len(digests) <= 1,
+        "same_size": len(sizes) == 1,
+        "digits": sorted(sizes),
     }

@@ -59,8 +59,12 @@ To compare saved result files:
 
 ```bash
 python3 compare_results.py results/
-python3 compare_results.py results/ --baseline intel-box --markdown-out COMPARISON.md
+python3 compare_results.py results/ --tier optimized
+python3 compare_results.py results/ --markdown-out COMPARISON.md
 ```
+
+Every machine and every tier is printed in one table. `--tier` narrows it to a
+single tier when only one row per machine is wanted.
 
 ## Troubleshooting
 

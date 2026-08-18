@@ -32,6 +32,21 @@ Each result is checked against an independent `mpmath` calculation. Runs use
 warm-up and repeated samples, and record median timing, variance, CPU limits,
 steal time, interpreter, GMP details, and a result digest.
 
+## Comparison Model
+
+Every machine runs every tier and prints the same table, so the two outputs line
+up row for row. The comparison itself is a judgement call, so the tooling leaves
+it to you:
+
+- **x86 is left alone.** It represents the status quo: generic compute, stock
+  libraries, no optimization effort spent.
+- **ARM gets the work.** Optimization effort is invested to use what the
+  architecture actually offers.
+
+Read the x86 `baseline` row against the ARM `optimized` row to see what
+migrating *and* optimizing is worth. Read the same tier on both machines to see
+what the hardware alone is worth. Both readings come from the same table.
+
 ## Deploy
 
 ```bash
@@ -71,6 +86,12 @@ Arm VM:
 python3 run_benchmark.py --sku azure_d2ps_v6
 ```
 
+Then collect both result files on one machine and compare:
+
+```bash
+python3 compare_results.py results/
+```
+
 ## What the Output Means
 
 - **Cost per 1k runs:** lower is better; this is the main comparison.
@@ -78,8 +99,10 @@ python3 run_benchmark.py --sku azure_d2ps_v6
 - **Median seconds:** the sustained timing used for cost.
 - **Integrity warnings:** do not rely on failed, noisy, or too-small runs.
 
-The `optimized` tier is the overall result. See [README-DETAILS.md](README-DETAILS.md)
-for method, options, pricing, comparisons, and troubleshooting.
+`compare_results.py` prints every machine at every tier and stops there. It does
+not nominate a winner, so pick the rows that match your question. See
+[README-DETAILS.md](README-DETAILS.md) for method, options, pricing,
+comparisons, and troubleshooting.
 
 ## License
 
