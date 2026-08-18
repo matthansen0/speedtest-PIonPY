@@ -1,0 +1,30 @@
+{
+  "_comment": "Prices are inputs to the cost model, not measurements. Re-verify them at the provider's pricing calculator for your region and commitment term, then update 'as_of'. Stale prices are the fastest way to make a migration argument fall apart.",
+  "as_of": null,
+  "currency": "USD",
+  "region": "unverified",
+  "term": "pay-as-you-go, Linux, no reservation",
+  "skus": {
+    "azure_d2s_v5": {
+      "vendor": "Intel",
+      "description": "Azure D2s_v5 (Intel Xeon Platinum, 2 vCPU = 1 physical core + SMT)",
+      "vcpus": 2,
+      "price_per_month": 78.11,
+      "notes": "Price carried over from the project README; unverified."
+    },
+    "azure_d2ads_v5": {
+      "vendor": "AMD",
+      "description": "Azure D2ads_v5 (AMD EPYC, 2 vCPU = 1 physical core + SMT)",
+      "vcpus": 2,
+      "price_per_month": 83.95,
+      "notes": "Price carried over from the project README; unverified."
+    },
+    "azure_d2ps_v6": {
+      "vendor": "ARM",
+      "description": "Azure D2ps_v6 (Ampere/Cobalt Arm, 2 vCPU = 2 physical cores)",
+      "vcpus": 2,
+      "price_per_month": 56.94,
+      "notes": "Price carried over from the project README; unverified."
+    }
+  }
+}

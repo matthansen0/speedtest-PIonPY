@@ -1,129 +1,81 @@
 # SpeedTest: Pi-on-Py
 
 <p align="center">
-  <img src="media/pionpy.png" alt="Pi on Py" title="Pi on Py" width="400"/>
+	<img src="media/pionpy.png" alt="Pi on Py" title="Pi on Py" width="400"/>
 </p>
 
-Welcome to the Pi-on-Py Speedtest, a Python project dedicated to exploring and benchmarking the performance of calculating Pi across various CPU architectures. This project aims to provide insights into how different computational strategies and optimizations can impact the efficiency and speed of Pi calculations on diverse hardware setups.
+This project validates the cost performance of ARM compute by optimizing specific
+workloads and measuring the result against x86. It asks a practical migration
+question: does an ARM VM deliver enough performance per dollar for this workload
+to justify using it?
 
-## Project Overview
+The current workload is big-integer computation of pi. The benchmark keeps the
+work fixed, applies distinct algorithmic, native-library, and parallel
+optimizations, verifies the output, and reports performance as cost per unit of
+work. The same approach can be extended with workloads that exercise other CPU
+behaviors.
 
-The Pi-on-Py Speedtest leverages advanced mathematical algorithms and Python's multiprocessing capabilities to divide and conquer the task of calculating Pi. By optimizing for different CPU architectures, this project sheds light on the fascinating world of computational mathematics and its practical implications in hardware performance.
+## Method
 
-## Features
+Every machine performs the same fixed amount of work. The benchmark runs five
+tiers so the sources of any speedup can be separated:
 
-- **Multi-Architecture Support**: Tailored optimizations for a variety of CPU architectures to ensure maximum performance.
-- **High Precision Calculations**: Utilize Python's `mpmath` library for high-precision Pi calculations.
-- **Benchmarking Tools**: Includes tools for benchmarking and comparing performance across different systems.
-- **Progress Reporting**: Real-time progress reporting for long-running calculations, providing insights into the calculation process.
+| Tier | Test |
+|---|---|
+| `baseline` | Naive series, one core |
+| `algorithm` | Binary splitting, one core |
+| `native` | Binary splitting with GMP, one core |
+| `parallel` | Binary splitting, all cores |
+| `optimized` | GMP with all cores |
 
-## Understanding CPU Architecture Differences
+Each result is checked against an independent `mpmath` calculation. Runs use
+warm-up and repeated samples, and record median timing, variance, CPU limits,
+steal time, interpreter, GMP details, and a result digest.
 
-The SpeedTest-PiOnPy project is designed to run on multiple CPU architectures, including Arm, AMD, and Intel. Each of these architectures has unique characteristics that can impact the performance of computational tasks. Here's a brief overview:
-
-- **Arm**: Known for its power efficiency, Arm processors are widely used in mobile devices and increasingly in servers and desktops. The project's optimizations for Arm leverage multiprocessing to distribute the Pi calculation workload across all available CPU cores, maximizing performance per watt and making it ideal for energy-conscious environments.
-
-- **AMD**: AMD CPUs, particularly those with the EPYC architecture, offer a high number of cores and threads, making them well-suited for parallel processing tasks. The optimizations for AMD aim to leverage this multi-threading capability to speed up the Pi calculation process.
-
-- **Intel**: Intel processors are renowned for their high single-core performance, which is crucial for tasks that cannot be easily parallelized. The project includes specific optimizations for Intel CPUs to take advantage of their architecture, such as using `pypy` for faster Python execution. `pypy` is a Python interpreter with a JIT (Just-In-Time) compilation feature that accelerates the execution of Python code, making it a perfect match for Intel's high-performance cores.
-
-By tailoring the optimizations to each CPU architecture, Pi-on-Py ensures that users can achieve the best possible performance regardless of their hardware setup. This approach allows for a more accurate comparison of hardware capabilities across different systems and architectures.
-
-## Getting Started
-
-To get started, follow these simple steps:
-
-1.) **Clone the Repository**
+## Deploy
 
 ```bash
-git clone https://github.com/matthansen0/speedtest-PIonPY
-cd speedtest-PIonPY
+azd auth login --use-device-code
+az login --use-device-code
+azd env new pionpy --location centralus
+azd env set ADMIN_PASSWORD 'choose-a-strong-password'
+azd up
 ```
 
+In the Azure Portal, open `pionpy-bastion`, choose **Connect > Bastion**, select
+a VM, and sign in as `azureuser` with the password.
 
-2.) **(Optional) Ensure Python Base Tools**
+## Run
 
-Most systems already have what you need. If `python3 -m venv` fails, install the venv module (Debian/Ubuntu example):
-
-```bash
-sudo apt update && sudo apt install python3 python3-venv -y
-```
-No manual `pip install` steps are required— the preparation script handles dependencies inside a local `venv/`.
-
-3.) **Prepare Environment (One-Time or Re-Runnable)**
+On each VM:
 
 ```bash
+cd ~/speedtest-PIonPY
 python3 prepare_benchmark.py
 ```
 
-This creates/updates `./venv`, installs dependencies (from `requirements.txt`), and (optionally) suggests PyPy if you're on Intel/AMD.
-
-4.) **Run the Benchmark**
+Intel VM:
 
 ```bash
-python3 run_benchmark.py
+python3 run_benchmark.py --sku azure_d2s_v5
 ```
 
-Output shows detected vendor, elapsed time (color-coded), last 50 digits (approximate), and writes a JSON results file (e.g. `results_*.json`).
+Arm VM:
 
-Automatic optimizations now included:
-* Warm-up pass (1% of iterations) for cache/JIT stabilization
-* Core affinity pinning (best-effort) to reduce migration
-* ARM big.LITTLE frequency weighting (allocates more work to faster cores)
-* Intel/AMD auto re-exec under PyPy via a local managed venv (.pypy_venv) for JIT speedups (safe under PEP 668)
-* JSON result artifact for later comparison
-* Always-on per-segment (10%) progress reporting
+```bash
+python3 run_benchmark.py --sku azure_d2ps_v6
+```
 
-Progress checkpoints (10% per worker segment) are displayed by default. Iteration count is fixed internally (10,000) for consistent cross-architecture comparison; a warm-up (unreported) precedes the main run.
+## What the Output Means
 
-### Results
+- **Cost per 1k runs:** lower is better; this is the main comparison.
+- **Runs per $:** higher is better.
+- **Median seconds:** the sustained timing used for cost.
+- **Integrity warnings:** do not rely on failed, noisy, or too-small runs.
 
-x64 Intel CPU on Azure Ds2 v5, $78.11/mo
-
-<img src="media/intel.png" alt="Intel CPU" title="Intel CPU" width="400"/>
-
-x64 AMD CPU on Azure D2ads v5, $83.95/mo
-
-<img src="media/amd.png" alt="Intel CPU" title="Intel CPU" width="400"/>
-
-RISC ARM CPU on Azure D2ps v6, $56.94/mo
-
-<img src="media/arm.png" alt="Intel CPU" title="Intel CPU" width="400"/>
-
-
-### PyPy Optimization Details
-
-When running on Intel or AMD, the script attempts to speed up execution by:
-
-1. Detecting a `pypy3` executable.
-2. Creating a project-local virtual environment at `.pypy_venv/` (if not already present).
-3. Ensuring `mpmath` is installed inside that venv.
-4. Re‑executing the benchmark under that PyPy environment.
-
-This approach avoids installing packages into the system Python (respects PEP 668) and keeps everything self‑contained in the repository folder.
-
-## Notes on Accuracy & Future Enhancements
-
-The computation done here is indicative of one type of compute workload, each chipset has their beneifts and there are cases where they will all outperform each other. The purpose here is simply to show that ARM CPUs, under the right circumstances can be more cost effective while simultaniously being more effecient than x64 CPUs.
-
-The current single-script benchmark uses an approximate segmented parallel method to stress CPUs uniformly. It is suitable for relative throughput comparisons (the goal of this project) but is not a mathematically strict parallelization of the Chudnovsky series. Future improvements may include:
-
-- Exact per-term or binary-splitting implementation (mathematically rigorous)
-- JSON output mode for automated comparisons
-- Optional correctness validation against known π prefixes
-- Thermal / frequency sampling during runs
-
-## Contributing
-
-I welcome contributions from the community! Whether it's adding new optimizations, improving the documentation, or reporting bugs, your contributions are greatly appreciated. Please refer to the CONTRIBUTING.md file for more information on how to contribute.
-
-### To-Do List
-
-Here are the next steps for the SpeedTest-PiOnPy project to enhance its functionality and user experience:
-
-- [ ] **Optimize Algorithm Efficiency**: Further refine the mathematical algorithms to improve calculation speed without sacrificing accuracy.
-- [ ] **Enhance User Interface**: Develop a more interactive and user-friendly interface for the benchmarking tools.
+The `optimized` tier is the overall result. See [README-DETAILS.md](README-DETAILS.md)
+for method, options, pricing, comparisons, and troubleshooting.
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+MIT — see [LICENSE](LICENSE).

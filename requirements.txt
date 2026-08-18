@@ -1,1 +1,8 @@
-mpmath
+# Independent oracle used to verify every result digit-for-digit.
+# Not part of the timed workload.
+mpmath>=1.3.0
+
+# GMP bindings. Powers the "native math library" optimization tier, which is
+# the lever that shows what recompiling a numeric stack for the target
+# architecture is actually worth. Optional: the tier is skipped if absent.
+gmpy2>=2.1.5
