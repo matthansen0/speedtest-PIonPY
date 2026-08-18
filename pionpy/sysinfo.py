@@ -130,6 +130,20 @@ def cpu_identity() -> dict:
     return info
 
 
+def _gmpy2_build() -> dict:
+    """How gmpy2 was installed. A portable wheel bundles a generic GMP."""
+    try:
+        import importlib.metadata as md
+
+        text = md.distribution("gmpy2").read_text("WHEEL") or ""
+    except Exception:
+        return {"tags": [], "portable_wheel": None}
+    tags = [line.split(":", 1)[1].strip()
+            for line in text.splitlines() if line.startswith("Tag:")]
+    portable = any("manylinux" in t or "musllinux" in t for t in tags)
+    return {"tags": tags, "portable_wheel": portable}
+
+
 def interpreter_info() -> dict:
     info = {
         "implementation": platform.python_implementation(),
@@ -141,9 +155,11 @@ def interpreter_info() -> dict:
 
         info["gmpy2"] = gmpy2.version()
         info["gmp"] = gmpy2.mp_version()
+        info["gmp_build"] = _gmpy2_build()
     except ImportError:
         info["gmpy2"] = None
         info["gmp"] = None
+        info["gmp_build"] = None
     return info
 
 
@@ -235,5 +251,5 @@ def warnings(env: dict) -> list[str]:
             f"{topo['logical_cpus']} CPUs."
         )
     if env["interpreter"]["gmp"] is None:
-        out.append("gmpy2/GMP not installed: the native-acceleration tier will be skipped.")
+        out.append("gmpy2/GMP not installed: optimized mode cannot run on this machine.")
     return out

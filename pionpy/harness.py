@@ -1,11 +1,9 @@
-"""Measurement harness: optimization tiers, repetition policy, and statistics.
+"""Measurement harness: runs the fixed workload in one mode and times it.
 
-Design rules that the previous benchmark violated:
+Design rules:
   * Total work is fixed. It does not shrink when the machine has more cores.
-  * Every tier computes the same digits of pi and is verified against a known
+  * Both modes compute the same digits and are verified against a known
     expansion, so a fast-but-wrong result cannot win.
-  * Each tier isolates exactly one optimization lever, so the speedups can be
-    attributed rather than guessed at.
   * Timing is repeated to a wall-clock budget and reported as a distribution,
     not a single sample.
 """
@@ -30,50 +28,30 @@ SIZE_PRESETS = {
 # rather than by the CPU under test.
 MIN_CREDIBLE_SECONDS = 0.25
 
-MIN_REPS = 7
-MAX_REPS = 50
+MIN_ITERATIONS = 7
+MAX_ITERATIONS = 50
 TARGET_SECONDS = 5.0
-MAX_TIER_SECONDS = 60.0
+MAX_TOTAL_SECONDS = 60.0
 NOISE_CV_THRESHOLD = 0.05
 
-
-@dataclass(frozen=True)
-class Tier:
-    key: str
-    label: str
-    lever: str
-    parallel: bool
-    use_gmp: bool
-    kernel: str  # "linear" | "binary_splitting"
+# Same calculation either way; only the numeric backend and core count differ.
+MODES = ("generic", "optimized")
 
 
-TIERS: tuple[Tier, ...] = (
-    Tier("baseline", "Naive series, single core",
-         "none (starting point)", False, False, "linear"),
-    Tier("algorithm", "Binary splitting, single core",
-         "algorithm (portable)", False, False, "binary_splitting"),
-    Tier("native", "Binary splitting + GMP, single core",
-         "native math library (arch-tuned)", False, True, "binary_splitting"),
-    Tier("parallel", "Binary splitting, all cores",
-         "parallelism", True, False, "binary_splitting"),
-    Tier("optimized", "Binary splitting + GMP, all cores",
-         "algorithm + native + parallelism", True, True, "binary_splitting"),
-)
+class MissingGMP(RuntimeError):
+    """Raised when optimized mode is requested without a GMP build present."""
 
 
 @dataclass
-class TierResult:
-    key: str
-    label: str
-    lever: str
-    status: str = "ok"
-    skipped_reason: str | None = None
-    reps: int = 0
+class Run:
+    mode: str
     workers: int = 1
-    min_seconds: float = 0.0
-    median_seconds: float = 0.0
-    mean_seconds: float = 0.0
-    stdev_seconds: float = 0.0
+    gmp: str | None = None
+    iterations: int = 0
+    total_seconds: float = 0.0
+    seconds_per_iteration: float = 0.0
+    fastest_seconds: float = 0.0
+    slowest_seconds: float = 0.0
     cv: float = 0.0
     noisy: bool = False
     verified: bool = False
@@ -81,150 +59,145 @@ class TierResult:
     samples: list[float] = field(default_factory=list)
 
 
-def _summarize(result: TierResult, samples: list[float]) -> TierResult:
-    result.samples = [round(s, 6) for s in samples]
-    result.reps = len(samples)
-    result.min_seconds = min(samples)
-    result.median_seconds = statistics.median(samples)
-    result.mean_seconds = statistics.fmean(samples)
-    result.stdev_seconds = statistics.stdev(samples) if len(samples) > 1 else 0.0
-    result.cv = result.stdev_seconds / result.mean_seconds if result.mean_seconds else 0.0
-    result.noisy = result.cv > NOISE_CV_THRESHOLD
-    return result
+def _summarize(run: Run, samples: list[float]) -> Run:
+    run.samples = [round(s, 6) for s in samples]
+    run.iterations = len(samples)
+    run.total_seconds = round(sum(samples), 4)
+    run.seconds_per_iteration = statistics.median(samples)
+    run.fastest_seconds = min(samples)
+    run.slowest_seconds = max(samples)
+    mean = statistics.fmean(samples)
+    stdev = statistics.stdev(samples) if len(samples) > 1 else 0.0
+    run.cv = stdev / mean if mean else 0.0
+    run.noisy = run.cv > NOISE_CV_THRESHOLD
+    return run
 
 
-def _plan_reps(calibration_seconds: float) -> int:
+def _plan_iterations(calibration_seconds: float) -> int:
     if calibration_seconds <= 0:
-        return MIN_REPS
-    if calibration_seconds >= MAX_TIER_SECONDS:
+        return MIN_ITERATIONS
+    if calibration_seconds >= MAX_TOTAL_SECONDS:
         return 3
     wanted = math.ceil(TARGET_SECONDS / calibration_seconds)
-    budget = max(1, int(MAX_TIER_SECONDS / calibration_seconds))
-    return max(3, min(MAX_REPS, budget, max(MIN_REPS, wanted)))
+    budget = max(1, int(MAX_TOTAL_SECONDS / calibration_seconds))
+    return max(3, min(MAX_ITERATIONS, budget, max(MIN_ITERATIONS, wanted)))
 
 
-def _make_runner(tier: Tier, digits: int, chunks: int, pool):
-    if tier.kernel == "linear":
-        return lambda: kernels.pi_linear(digits, use_gmp=tier.use_gmp)
-    mapper = None
-    if tier.parallel and pool is not None:
-        mapper = lambda fn, tasks: pool.map(fn, tasks, chunksize=1)  # noqa: E731
-    return lambda: kernels.pi_binary_splitting(
-        digits, chunks=chunks, use_gmp=tier.use_gmp, mapper=mapper
-    )
+def gmp_version() -> str | None:
+    try:
+        import gmpy2
+
+        return gmpy2.mp_version()
+    except ImportError:
+        return None
 
 
-def run_tier(tier: Tier, digits: int, chunks: int, pool, workers: int,
-             progress=None) -> TierResult:
-    result = TierResult(key=tier.key, label=tier.label, lever=tier.lever)
-    result.workers = workers if tier.parallel else 1
-
-    if tier.use_gmp:
-        try:
-            import gmpy2  # noqa: F401
-        except ImportError:
-            result.status = "skipped"
-            result.skipped_reason = "gmpy2 not installed"
-            return result
-
-    runner = _make_runner(tier, digits, chunks, pool)
-
-    # Calibration rep doubles as warm-up: it pays for imports, JIT warm-up,
-    # allocator growth and pool page-faults, then is discarded.
-    t0 = time.perf_counter()
-    reference = runner()
-    calibration = time.perf_counter() - t0
-
-    result.verified = kernels.verify(reference, digits)
-    if not result.verified:
-        result.status = "failed"
-        result.skipped_reason = "result did not match known digits of pi"
-        return result
-    result.digest = hashlib.sha256(str(reference).encode()).hexdigest()
-
-    reps = _plan_reps(calibration)
-    samples = []
-    for i in range(reps):
-        t0 = time.perf_counter()
-        value = runner()
-        samples.append(time.perf_counter() - t0)
-        if value != reference:
-            result.status = "failed"
-            result.skipped_reason = "non-deterministic result between repetitions"
-            return result
-        if progress:
-            progress(tier, i + 1, reps)
-
-    return _summarize(result, samples)
-
-
-def measurement_warnings(digits: int, results: list[TierResult], workers: int) -> list[str]:
-    """Conditions that mean the numbers should not be quoted as-is."""
-    out = []
-    ok = {r.key: r for r in results if r.status == "ok"}
-    if not ok:
-        return out
-
-    fastest = min(ok.values(), key=lambda r: r.median_seconds)
-    if fastest.median_seconds < MIN_CREDIBLE_SECONDS:
-        out.append(
-            f"Fastest tier runs in {fastest.median_seconds * 1000:.0f} ms, below the "
-            f"{MIN_CREDIBLE_SECONDS * 1000:.0f} ms credibility floor. Timer and scheduler "
-            "noise dominate; re-run with a larger --size."
-        )
-    if "algorithm" in ok and "parallel" in ok and workers > 1:
-        ratio = ok["algorithm"].median_seconds / ok["parallel"].median_seconds
-        if ratio < 1.0:
-            out.append(
-                f"Parallelism made this {1 / ratio:.2f}x slower: at {digits:,} digits the "
-                "per-chunk work is smaller than the process-communication overhead. "
-                "Use a larger --size before drawing conclusions about core scaling."
-            )
-        elif ratio / workers < 0.5:
-            out.append(
-                f"Parallel efficiency is only {ratio / workers * 100:.0f}% across {workers} "
-                "workers, so this size under-uses the machine."
-            )
-    return out
-
-
-def run_suite(digits: int, chunks: int = kernels.DEFAULT_CHUNKS,
-              tiers: tuple[Tier, ...] = TIERS, progress=None) -> dict:
-    env = sysinfo.collect()
+def usable_workers(env: dict) -> int:
     workers = env["usable_cpus"]
     limit = env.get("cgroup_cpu_limit")
     if limit is not None:
         workers = max(1, min(workers, int(limit) or 1))
+    return workers
+
+
+def measurement_warnings(digits: int, run: Run, env: dict | None = None) -> list[str]:
+    """Conditions that mean the numbers should not be quoted as-is."""
+    out = []
+    if run.seconds_per_iteration < MIN_CREDIBLE_SECONDS:
+        out.append(
+            f"An iteration takes {run.seconds_per_iteration * 1000:.0f} ms, below the "
+            f"{MIN_CREDIBLE_SECONDS * 1000:.0f} ms credibility floor. Timer and scheduler "
+            "noise dominate; re-run with a larger --size."
+        )
+    if run.noisy:
+        out.append(
+            f"Run-to-run variance is {run.cv * 100:.1f}%, above the "
+            f"{NOISE_CV_THRESHOLD * 100:.0f}% threshold. Re-run on an idle machine."
+        )
+    if run.mode == "optimized" and env:
+        build = (env.get("interpreter") or {}).get("gmp_build") or {}
+        if build.get("portable_wheel"):
+            out.append(
+                "gmpy2 came from a portable wheel, so its bundled GMP is a generic "
+                "build rather than one tuned for this CPU. Reinstall with "
+                "'pip install --no-binary gmpy2 --force-reinstall gmpy2' to measure "
+                "a genuinely architecture-tuned library."
+            )
+    return out
+
+
+def run_suite(digits: int, mode: str = "generic", chunks: int = kernels.DEFAULT_CHUNKS,
+              progress=None) -> dict:
+    if mode not in MODES:
+        raise ValueError(f"unknown mode {mode!r}; expected one of {', '.join(MODES)}")
+
+    use_gmp = mode == "optimized"
+    gmp = gmp_version()
+    if use_gmp and gmp is None:
+        raise MissingGMP(
+            "optimized mode needs gmpy2 built against this machine's GMP; "
+            "run prepare_benchmark.py first"
+        )
+
+    env = sysinfo.collect()
+    workers = usable_workers(env)
+    run = Run(mode=mode, workers=workers, gmp=gmp if use_gmp else None)
 
     monitor = sysinfo.StealMonitor()
     started = time.time()
-
-    needs_pool = any(t.parallel for t in tiers) and workers > 1
-    pool = Pool(processes=workers) if needs_pool else None
+    pool = Pool(processes=workers) if workers > 1 else None
     try:
+        mapper = None
         if pool is not None:
             # Force worker processes to actually start before anything is timed.
             pool.map(_noop, range(workers))
-        results = [run_tier(t, digits, chunks, pool, workers, progress) for t in tiers]
+            mapper = lambda fn, tasks: pool.map(fn, tasks, chunksize=1)  # noqa: E731
+
+        def runner():
+            return kernels.pi_binary_splitting(
+                digits, chunks=chunks, use_gmp=use_gmp, mapper=mapper
+            )
+
+        # Calibration doubles as warm-up: it pays for imports, allocator growth
+        # and pool page-faults, then is discarded.
+        t0 = time.perf_counter()
+        reference = runner()
+        calibration = time.perf_counter() - t0
+
+        run.verified = kernels.verify(reference, digits)
+        if not run.verified:
+            raise RuntimeError("result did not match the known digits of pi")
+        run.digest = hashlib.sha256(str(reference).encode()).hexdigest()
+
+        iterations = _plan_iterations(calibration)
+        samples = []
+        for i in range(iterations):
+            t0 = time.perf_counter()
+            value = runner()
+            samples.append(time.perf_counter() - t0)
+            if value != reference:
+                raise RuntimeError("non-deterministic result between iterations")
+            if progress:
+                progress(i + 1, iterations)
+        _summarize(run, samples)
     finally:
         if pool is not None:
             pool.close()
             pool.join()
 
-    digests = {r.digest for r in results if r.digest}
     return {
-        "schema": 2,
+        "schema": 3,
+        "mode": mode,
         "digits": digits,
         "chunks": chunks,
         "terms": kernels.terms_for_digits(digits),
         "verification": kernels.verification_method(digits),
         "environment": env,
         "environment_warnings": sysinfo.warnings(env),
-        "measurement_warnings": measurement_warnings(digits, results, workers),
+        "measurement_warnings": measurement_warnings(digits, run, env),
         "runtime": monitor.result(),
         "wall_seconds": round(time.time() - started, 2),
-        "cross_tier_digest_match": len(digests) <= 1,
-        "tiers": [asdict(r) for r in results],
+        "run": asdict(run),
     }
 
 

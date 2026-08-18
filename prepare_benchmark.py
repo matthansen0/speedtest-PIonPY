@@ -7,9 +7,9 @@
 Creates ./venv, installs dependencies, and verifies that the benchmark
 produces correct digits of pi before you spend time collecting numbers.
 
-gmpy2 must compile against the platform's GMP. That is deliberate: the
-"native math library" tier exists to measure what an architecture-tuned
-numeric stack is worth, so it has to be a real build for this CPU.
+gmpy2 must compile against the platform's GMP. That is deliberate: optimized
+mode exists to measure what an architecture-tuned numeric stack is worth, so it
+has to be a real build for this CPU.
 """
 from __future__ import annotations
 
@@ -61,7 +61,10 @@ def install_requirements() -> bool:
         print("[error] venv python missing after creation.")
         sys.exit(1)
     _run([str(py), "-m", "pip", "install", "--quiet", "--upgrade", "pip"])
-    if _run([str(py), "-m", "pip", "install", "--quiet", "-r", str(REQ_FILE)]).returncode == 0:
+    # --no-binary forces gmpy2 to compile against this machine's GMP; a portable
+    # wheel would bundle a generic build and defeat the optimized profile.
+    if _run([str(py), "-m", "pip", "install", "--quiet", "--no-binary", "gmpy2",
+             "-r", str(REQ_FILE)]).returncode == 0:
         return True
 
     print("\n[warn] dependency install failed. gmpy2 usually needs GMP headers:")
@@ -70,15 +73,15 @@ def install_requirements() -> bool:
     print("\n[prep] retrying without gmpy2 so the other tiers still work...")
     ok = _run([str(py), "-m", "pip", "install", "--quiet", "mpmath>=1.3.0"]).returncode == 0
     if ok:
-        print("[warn] the native-acceleration tier will be skipped on this machine,")
-        print("       which removes the most architecture-sensitive measurement.")
+        print("[warn] optimized mode will not run on this machine,")
+        print("       which removes the architecture-sensitive measurement.")
     return ok
 
 
 SELF_TEST = """
 from pionpy import kernels as K
 d = 5000
-values = [K.pi_linear(d), K.pi_binary_splitting(d)]
+values = [K.pi_binary_splitting(d)]
 try:
     import gmpy2
     values.append(K.pi_binary_splitting(d, use_gmp=True))
@@ -86,7 +89,7 @@ try:
 except ImportError:
     gmp = None
 assert all(K.verify(v, d) for v in values), 'digit verification failed'
-assert len(set(values)) == 1, 'kernels disagree with each other'
+assert len(set(values)) == 1, 'generic and optimized modes disagree'
 print('[prep] self-test passed:', K.verification_method(d), '| GMP:', gmp or 'not available')
 """
 
@@ -108,8 +111,8 @@ def main() -> int:
         print("[error] self-test failed; do not trust results from this environment.")
         return 1
     print("\n[prep] ready.")
-    print("[next] python3 run_benchmark.py --sku azure_d2ps_v6")
-    print("       (list SKUs in pricing.json, or pass --price-per-month)")
+    print("[next] python3 run_benchmark.py --cpu intel")
+    print("       (use --cpu arm on the Arm VM)")
     return 0
 
 

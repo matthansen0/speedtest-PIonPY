@@ -4,6 +4,10 @@
   "currency": "USD",
   "region": "unverified",
   "term": "pay-as-you-go, Linux, no reservation",
+  "cpu_defaults": {
+    "intel": "azure_d2s_v5",
+    "arm": "azure_d2ps_v6"
+  },
   "skus": {
     "azure_d2s_v5": {
       "vendor": "Intel",

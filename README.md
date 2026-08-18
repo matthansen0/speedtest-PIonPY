@@ -17,35 +17,29 @@ behaviors.
 
 ## Method
 
-Every machine performs the same fixed amount of work. The benchmark runs five
-tiers so the sources of any speedup can be separated:
+Every machine performs the same fixed amount of work: a set number of digits of
+pi, computed by the same algorithm, saturating every usable core. Only the
+big-integer backend changes:
 
-| Tier | Test |
+| Mode | Backend |
 |---|---|
-| `baseline` | Naive series, one core |
-| `algorithm` | Binary splitting, one core |
-| `native` | Binary splitting with GMP, one core |
-| `parallel` | Binary splitting, all cores |
-| `optimized` | GMP with all cores |
+| `generic` | Stock CPython integers, no native math library |
+| `optimized` | GMP via `gmpy2`, compiled for the target CPU |
 
-Each result is checked against an independent `mpmath` calculation. Runs use
-warm-up and repeated samples, and record median timing, variance, CPU limits,
-steal time, interpreter, GMP details, and a result digest.
+Both modes run in parallel across all cores, so the single variable is whether
+the numeric stack is tuned for the architecture. Each result is verified against
+an independent `mpmath` calculation, and timings are repeated to a wall-clock
+budget instead of taken from one sample.
 
 ## Comparison Model
 
-Every machine runs every tier and prints the same table, so the two outputs line
-up row for row. The comparison itself is a judgement call, so the tooling leaves
-it to you:
+Run `generic` on the x86 machine to represent the status quo: stock libraries,
+no optimization effort. Run `optimized` on the ARM machine to represent the
+migration target after effort has been spent on it. Both compute identical
+digits, so the results are directly comparable.
 
-- **x86 is left alone.** It represents the status quo: generic compute, stock
-  libraries, no optimization effort spent.
-- **ARM gets the work.** Optimization effort is invested to use what the
-  architecture actually offers.
-
-Read the x86 `baseline` row against the ARM `optimized` row to see what
-migrating *and* optimizing is worth. Read the same tier on both machines to see
-what the hardware alone is worth. Both readings come from the same table.
+Running both modes on both machines is also supported, and is the way to tell
+whether a difference came from the architecture or from the optimization.
 
 ## Deploy
 
@@ -67,24 +61,35 @@ a VM, and sign in as `azureuser` with the password.
 On each VM:
 
 ```bash
-apt update
+sudo apt update
+sudo apt install -y git python3-venv python3-dev \
+    libgmp-dev libmpfr-dev libmpc-dev build-essential
 git clone https://github.com/matthansen0/speedtest-PIonPY
 cd speedtest-PIonPY
-apt install python3.10-venv
 python3 prepare_benchmark.py
 ```
+
+The GMP packages are only strictly required on the Arm VM, which builds `gmpy2`
+against them for the optimized profile. The Intel VM needs just `git`,
+`python3-venv` and `python3-dev` for the stock profile. Installing the same list
+on both is simplest, and lets either machine run either profile.
 
 Intel VM:
 
 ```bash
-python3 run_benchmark.py --sku azure_d2s_v5
+python3 run_benchmark.py --cpu intel
 ```
 
 Arm VM:
 
 ```bash
-python3 run_benchmark.py --sku azure_d2ps_v6
+python3 run_benchmark.py --cpu arm
 ```
+
+`--cpu intel` runs the stock profile and `--cpu arm` runs the ARM-optimized
+profile. Each also picks up its price from `pricing.json`, so no other flags are
+needed. The run stops if the flag does not match the machine it is running on,
+so a result cannot be saved under the wrong label.
 
 Then collect both result files on one machine and compare:
 
@@ -94,15 +99,17 @@ python3 compare_results.py results/
 
 ## What the Output Means
 
-- **Cost per 1k runs:** lower is better; this is the main comparison.
-- **Runs per $:** higher is better.
-- **Median seconds:** the sustained timing used for cost.
-- **Integrity warnings:** do not rely on failed, noisy, or too-small runs.
+Each run reports how many iterations it completed and how long each one took:
 
-`compare_results.py` prints every machine at every tier and stops there. It does
-not nominate a winner, so pick the rows that match your question. See
-[README-DETAILS.md](README-DETAILS.md) for method, options, pricing,
-comparisons, and troubleshooting.
+- **s per iteration:** the headline timing, taken as the median.
+- **Iterations/hour:** the same figure as throughput.
+- **Cost per 1k iterations:** throughput priced with the VM's hourly rate.
+- **Verified:** the digits matched the known expansion of pi.
+- **Warnings:** do not quote runs that are unverified, noisy, or too small.
+
+`compare_results.py` prints one row per saved run and stops there. It does not
+nominate a winner. See [README-DETAILS.md](README-DETAILS.md) for method,
+options, pricing, and troubleshooting.
 
 ## License
 

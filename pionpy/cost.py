@@ -51,8 +51,8 @@ def price_warnings(pricing: dict, resolved: dict) -> list[str]:
     out = []
     if resolved.get("price_per_hour") is None:
         out.append(
-            "No price supplied: cost metrics are omitted. Pass --price-per-month "
-            "or --sku to get cost-per-work numbers."
+            "No price supplied: cost metrics are omitted. Pass --cpu to use the "
+            "price in pricing.json, or --price-per-month for an explicit figure."
         )
         return out
     as_of = pricing.get("as_of")
@@ -69,144 +69,62 @@ def price_warnings(pricing: dict, resolved: dict) -> list[str]:
     return out
 
 
-def tier_economics(seconds: float, price_per_hour: float | None) -> dict:
-    """Throughput and cost for one tier. `seconds` is time per fixed work unit."""
-    if seconds <= 0:
+def economics(seconds_per_iteration: float, price_per_hour: float | None) -> dict:
+    """Throughput and cost for one fixed-size iteration."""
+    if seconds_per_iteration <= 0:
         return {}
-    runs_per_hour = 3600.0 / seconds
-    out = {"runs_per_hour": round(runs_per_hour, 3)}
+    per_hour = 3600.0 / seconds_per_iteration
+    out = {"iterations_per_hour": round(per_hour, 2)}
     if price_per_hour is not None:
-        out["cost_per_1k_runs"] = round(price_per_hour / runs_per_hour * 1000, 6)
-        out["runs_per_dollar"] = round(runs_per_hour / price_per_hour, 3)
+        out["cost_per_1k_iterations"] = round(price_per_hour / per_hour * 1000, 6)
+        out["iterations_per_dollar"] = round(per_hour / price_per_hour, 2)
     return out
 
 
-def annotate(report: dict, resolved: dict, metric: str = "median_seconds") -> dict:
-    """Attach per-tier economics and the optimization-value summary in place."""
+def annotate(report: dict, resolved: dict) -> dict:
+    """Attach pricing and throughput economics to a run, in place."""
     price = resolved.get("price_per_hour")
     report["pricing"] = dict(resolved)
     if price is not None:
         report["pricing"]["price_per_month"] = round(price * HOURS_PER_MONTH, 2)
-    report["cost_metric"] = metric
-
-    tiers = {t["key"]: t for t in report["tiers"] if t["status"] == "ok"}
-    for t in report["tiers"]:
-        if t["status"] == "ok":
-            t["economics"] = tier_economics(t[metric], price)
-
-    baseline = tiers.get("baseline")
-    best_key = min(tiers, key=lambda k: tiers[k][metric]) if tiers else None
-    best = tiers.get(best_key) if best_key else None
-
-    summary: dict = {}
-    if baseline and best:
-        speedup = baseline[metric] / best[metric]
-        summary = {
-            "baseline_tier": baseline["key"],
-            "best_tier": best["key"],
-            "optimization_complete": "optimized" in tiers,
-            "baseline_seconds": round(baseline[metric], 4),
-            "best_seconds": round(best[metric], 4),
-            "optimization_speedup": round(speedup, 2),
-        }
-        if price is not None:
-            base_cost = baseline["economics"]["cost_per_1k_runs"]
-            best_cost = best["economics"]["cost_per_1k_runs"]
-            summary["cost_per_1k_runs_baseline"] = base_cost
-            summary["cost_per_1k_runs_optimized"] = best_cost
-            summary["cost_reduction_percent"] = round((1 - best_cost / base_cost) * 100, 2)
-            summary["effective_price_per_month"] = round(
-                price * HOURS_PER_MONTH / speedup, 2)
-
-        # Attribute the total gain to individual levers.
-        levers = {}
-        if "algorithm" in tiers:
-            levers["algorithm"] = round(baseline[metric] / tiers["algorithm"][metric], 2)
-        if "algorithm" in tiers and "native" in tiers:
-            levers["native_math_library"] = round(
-                tiers["algorithm"][metric] / tiers["native"][metric], 2)
-        if "algorithm" in tiers and "parallel" in tiers:
-            levers["parallelism"] = round(
-                tiers["algorithm"][metric] / tiers["parallel"][metric], 2)
-        summary["lever_speedups"] = levers
-
-        workers = best.get("workers", 1)
-        if "algorithm" in tiers and "parallel" in tiers and workers > 1:
-            scaling = tiers["algorithm"][metric] / tiers["parallel"][metric]
-            summary["parallel_efficiency_percent"] = round(scaling / workers * 100, 1)
-
-    report["optimization_value"] = summary
+    report["economics"] = economics(report["run"]["seconds_per_iteration"], price)
     return report
 
 
-def results_matrix(reports: list[dict], metric: str = "median_seconds",
-                   tier_key: str | None = None) -> list[dict]:
-    """Every machine at every tier, unranked and in run order.
-
-    No machine is nominated as the reference and no tier is nominated as the
-    result, so the reader chooses the pair that matches the question.
-    """
+def summarize(reports: list[dict]) -> list[dict]:
+    """One row per saved run, in load order and unranked."""
     rows = []
     for rep in reports:
         env = rep["environment"]
-        label = rep.get("label") or env["cpu"].get("model") or env["hostname"]
+        run = rep["run"]
+        econ = rep.get("economics") or {}
         price = (rep.get("pricing") or {}).get("price_per_hour")
-        base = next((t for t in rep["tiers"]
-                     if t["key"] == "baseline" and t["status"] == "ok"), None)
-        for tier in rep["tiers"]:
-            if tier_key and tier["key"] != tier_key:
-                continue
-            row = {
-                "label": label,
-                "arch": env["cpu"]["arch"],
-                "tier": tier["key"],
-                "lever": tier.get("lever"),
-                "status": tier["status"],
-                "skipped_reason": tier.get("skipped_reason"),
-                "workers": tier.get("workers"),
-                "noisy": tier.get("noisy"),
-                "digest": tier.get("digest"),
-                "digits": rep["digits"],
-            }
-            if tier["status"] == "ok":
-                seconds = tier[metric]
-                runs_per_hour = 3600.0 / seconds
-                row["seconds"] = round(seconds, 4)
-                row["runs_per_hour"] = round(runs_per_hour, 2)
-                if base:
-                    row["vs_baseline"] = round(base[metric] / seconds, 2)
-                if price is not None:
-                    row["cost_per_1k_runs"] = round(price / runs_per_hour * 1000, 6)
-                    row["runs_per_dollar"] = round(runs_per_hour / price, 2)
-            rows.append(row)
-    return rows
-
-
-def machines(reports: list[dict]) -> list[dict]:
-    """One row per machine: what it is, and what it costs to rent."""
-    out = []
-    for rep in reports:
-        env = rep["environment"]
-        price = (rep.get("pricing") or {}).get("price_per_hour")
-        out.append({
+        rows.append({
             "label": rep.get("label") or env["cpu"].get("model") or env["hostname"],
             "arch": env["cpu"]["arch"],
             "model": env["cpu"].get("model"),
-            "vcpus": env["topology"]["logical_cpus"],
-            "physical_cores": env["topology"].get("physical_cores"),
-            "smt": env["topology"].get("smt_enabled"),
-            "gmp": (env.get("interpreter") or {}).get("gmp"),
+            "mode": rep["mode"],
+            "gmp": run.get("gmp"),
+            "workers": run.get("workers"),
             "digits": rep["digits"],
+            "iterations": run["iterations"],
+            "total_seconds": run["total_seconds"],
+            "seconds_per_iteration": run["seconds_per_iteration"],
+            "iterations_per_hour": econ.get("iterations_per_hour"),
+            "cost_per_1k_iterations": econ.get("cost_per_1k_iterations"),
             "price_per_hour": price,
             "price_per_month": round(price * HOURS_PER_MONTH, 2) if price else None,
+            "verified": run.get("verified"),
+            "noisy": run.get("noisy"),
+            "digest": run.get("digest"),
             "steal_percent": (rep.get("runtime") or {}).get("steal_percent"),
         })
-    return out
+    return rows
 
 
 def integrity(reports: list[dict]) -> dict:
     """Whether these runs are eligible to be compared at all."""
-    digests = {t["digest"] for rep in reports for t in rep["tiers"] if t.get("digest")}
+    digests = {rep["run"]["digest"] for rep in reports if rep["run"].get("digest")}
     sizes = {rep["digits"] for rep in reports}
     return {
         "digests_match": len(digests) <= 1,

@@ -1,9 +1,9 @@
-"""Deterministic, verifiable pi kernels used as the benchmark workload.
+"""Deterministic, verifiable pi kernel used as the benchmark workload.
 
-Every kernel computes floor(pi * 10**digits) and MUST return bit-identical
-output for a given `digits` value on every machine and at every optimization
-tier. That property is what makes cross-architecture comparison meaningful:
-the work is fixed, only the time-to-complete varies.
+The kernel computes floor(pi * 10**digits) and MUST return bit-identical
+output for a given `digits` value on every machine and in every mode. That
+property is what makes cross-architecture comparison meaningful: the work is
+fixed, only the time-to-complete varies.
 """
 from __future__ import annotations
 
@@ -49,38 +49,7 @@ def terms_for_digits(digits: int) -> int:
 
 
 # --------------------------------------------------------------------------
-# Tier 0 kernel: naive linear summation (correct, but O(n * prec) bignum ops)
-# --------------------------------------------------------------------------
-
-def pi_linear(digits: int, use_gmp: bool = False) -> int:
-    """Straightforward term-by-term Chudnovsky in fixed-point arithmetic.
-
-    This is the "wrote it the obvious way" baseline. It is numerically
-    correct, unlike the previous benchmark's segmented approximation.
-    """
-    to_int, isqrt = _int_ops(use_gmp)
-    prec = digits + GUARD_DIGITS
-    one = to_int(10) ** prec
-    c3_over_24 = to_int(_C3_OVER_24)
-
-    a_k = one
-    a_sum = one
-    b_sum = to_int(0)
-    k = 0
-    while a_k != 0:
-        k += 1
-        a_k *= -(6 * k - 5) * (2 * k - 1) * (6 * k - 1)
-        a_k //= k * k * k * c3_over_24
-        a_sum += a_k
-        b_sum += k * a_k
-
-    total = 13591409 * a_sum + 545140134 * b_sum
-    pi = (426880 * isqrt(10005 * one * one) * one) // total
-    return int(pi // to_int(10) ** GUARD_DIGITS)
-
-
-# --------------------------------------------------------------------------
-# Tier 1+ kernel: binary splitting
+# Kernel: binary splitting
 # --------------------------------------------------------------------------
 
 def _bs(a: int, b: int, to_int):
