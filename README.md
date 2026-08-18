@@ -62,8 +62,7 @@ On each VM:
 
 ```bash
 sudo apt update
-sudo apt install -y git python3-venv python3-dev \
-    libgmp-dev libmpfr-dev libmpc-dev build-essential
+sudo apt install -y git python3-venv python3-dev libgmp-dev libmpfr-dev libmpc-dev build-essential
 git clone https://github.com/matthansen0/speedtest-PIonPY
 cd speedtest-PIonPY
 python3 prepare_benchmark.py
