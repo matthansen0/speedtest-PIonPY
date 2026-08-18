@@ -37,6 +37,8 @@ steal time, interpreter, GMP details, and a result digest.
 ```bash
 azd auth login --use-device-code
 az login --use-device-code
+git clone https://github.com/matthansen0/speedtest-PIonPY
+cd speedtest-PionPY
 azd env new pionpy --location centralus
 azd env set ADMIN_PASSWORD 'choose-a-strong-password'
 azd up
