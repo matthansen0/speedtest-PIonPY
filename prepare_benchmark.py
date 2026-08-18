@@ -13,7 +13,9 @@ has to be a real build for this CPU.
 """
 from __future__ import annotations
 
+import os
 import platform
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -44,14 +46,39 @@ def ensure_python_version() -> None:
         sys.exit(1)
 
 
+def _venv_has_pip() -> bool:
+    py = venv_python()
+    if not py.exists():
+        return False
+    return subprocess.run(
+        [str(py), "-m", "pip", "--version"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    ).returncode == 0
+
+
 def create_venv() -> None:
+    # A venv built before python3-venv was installed exists but has no pip,
+    # so presence alone is not enough to reuse it.
     if VENV_DIR.exists():
-        print(f"[prep] reusing venv at {VENV_DIR}")
-        return
+        if _venv_has_pip():
+            print(f"[prep] reusing venv at {VENV_DIR}")
+            return
+        print(f"[prep] venv at {VENV_DIR} has no pip; repairing it")
+        if venv_python().exists():
+            _run([str(venv_python()), "-m", "ensurepip", "--upgrade"])
+            if _venv_has_pip():
+                return
+        print("[prep] rebuilding the venv from scratch")
+        shutil.rmtree(VENV_DIR)
+
     print(f"[prep] creating venv at {VENV_DIR}")
     if _run([sys.executable, "-m", "venv", str(VENV_DIR)]).returncode != 0:
         print("[error] could not create the virtual environment.")
         print("        Debian/Ubuntu: sudo apt install -y python3-venv")
+        sys.exit(1)
+    if not _venv_has_pip():
+        print("[error] the new venv still has no pip.")
+        print("        Debian/Ubuntu: sudo apt install -y python3-venv python3-pip")
         sys.exit(1)
 
 
@@ -61,16 +88,25 @@ def install_requirements() -> bool:
         print("[error] venv python missing after creation.")
         sys.exit(1)
     _run([str(py), "-m", "pip", "install", "--quiet", "--upgrade", "pip"])
-    # --no-binary forces gmpy2 to compile against this machine's GMP; a portable
-    # wheel would bundle a generic build and defeat the optimized profile.
+    # Preferred: compile gmpy2 against this machine's GMP, which is what makes
+    # the optimized profile architecture-specific.
     if _run([str(py), "-m", "pip", "install", "--quiet", "--no-binary", "gmpy2",
              "-r", str(REQ_FILE)]).returncode == 0:
+        print("[prep] gmpy2 compiled against this machine's GMP.")
         return True
 
-    print("\n[warn] dependency install failed. gmpy2 usually needs GMP headers:")
+    print("\n[warn] could not build gmpy2 from source. It needs the GMP, MPFR and")
+    print("       MPC headers plus a compiler:")
     for name, hint in BUILD_DEPS_HINT.items():
         print(f"       {name:<7} {hint}")
-    print("\n[prep] retrying without gmpy2 so the other tiers still work...")
+
+    print("\n[prep] falling back to a prebuilt gmpy2 wheel...")
+    if _run([str(py), "-m", "pip", "install", "--quiet", "-r", str(REQ_FILE)]).returncode == 0:
+        print("[warn] that wheel bundles a generic GMP that is not tuned for this CPU.")
+        print("       Optimized runs still work, and every report will say so.")
+        return True
+
+    print("\n[prep] falling back to mpmath only...")
     ok = _run([str(py), "-m", "pip", "install", "--quiet", "mpmath>=1.3.0"]).returncode == 0
     if ok:
         print("[warn] optimized mode will not run on this machine,")
@@ -102,6 +138,9 @@ def self_test() -> bool:
 
 def main() -> int:
     print("[prep] preparing Pi-on-Py benchmark environment")
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        print("[warn] running as root: venv/ and results/ will be root-owned and the")
+        print("       benchmark may then fail for the normal login user.")
     ensure_python_version()
     create_venv()
     if not install_requirements():
