@@ -52,7 +52,10 @@ a VM, and sign in as `azureuser` with the password.
 On each VM:
 
 ```bash
-cd ~/speedtest-PIonPY
+apt update
+git clone https://github.com/matthansen0/speedtest-PIonPY
+cd speedtest-PIonPY
+apt install python3.10-venv
 python3 prepare_benchmark.py
 ```
 
