@@ -12,3 +12,6 @@ ENV/
 # Benchmark artifacts
 results/
 results_*.json
+
+# Azure Developer CLI metadata
+.azure/

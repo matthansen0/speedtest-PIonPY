@@ -1,0 +1,10 @@
+name: speedtest-pionpy
+metadata:
+  template: speedtest-pionpy@0.0.1-beta
+infra:
+  provider: bicep
+  path: infra
+hooks:
+  postprovision:
+    shell: sh
+    run: ./scripts/deploy-to-vms.sh
