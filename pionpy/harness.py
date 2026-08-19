@@ -28,6 +28,7 @@ SIZE_PRESETS = {
 # rather than by the CPU under test.
 MIN_CREDIBLE_SECONDS = 0.25
 
+ITERATION_MULTIPLIER = 5
 MIN_ITERATIONS = 7
 MAX_ITERATIONS = 50
 TARGET_SECONDS = 5.0
@@ -75,12 +76,13 @@ def _summarize(run: Run, samples: list[float]) -> Run:
 
 def _plan_iterations(calibration_seconds: float) -> int:
     if calibration_seconds <= 0:
-        return MIN_ITERATIONS
+        return MIN_ITERATIONS * ITERATION_MULTIPLIER
     if calibration_seconds >= MAX_TOTAL_SECONDS:
-        return 3
+        return 3 * ITERATION_MULTIPLIER
     wanted = math.ceil(TARGET_SECONDS / calibration_seconds)
     budget = max(1, int(MAX_TOTAL_SECONDS / calibration_seconds))
-    return max(3, min(MAX_ITERATIONS, budget, max(MIN_ITERATIONS, wanted)))
+    base = max(3, min(MAX_ITERATIONS, budget, max(MIN_ITERATIONS, wanted)))
+    return base * ITERATION_MULTIPLIER
 
 
 def gmp_version() -> str | None:
